@@ -1,9 +1,7 @@
 """kicad2ant KiCad plugin: simulate the antenna of the open board in openEMS from a toolbar button.
 
 It fills the zones, saves a copy of the board as it is on screen into the run folder and runs scripts/kicad2ant.py
-on that copy (the user's .kicad_pcb / .kicad_pro are never written). Progress comes from openEMS's own log file.
-UI ideas from other antenna tools.
-"""
+on that copy (the user's .kicad_pcb / .kicad_pro are never written). Progress comes from openEMS's own log file."""
 import json, os, subprocess, sys, threading, time
 
 import pcbnew

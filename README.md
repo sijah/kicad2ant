@@ -252,5 +252,4 @@ GPL-3.0-or-later, see [LICENSE](LICENSE). openEMS and CSXCAD are © Thorsten Lie
 
 Design notes were taken from [kicad2ems](https://github.com/lowprocess/kicad2ems) (air size, excitation past
 the band, gain table) and Antmicro's [gerber2ems](https://github.com/antmicro/gerber2ems) (VNA overlay, Smith
-chart, convergence check); the plugin's window borrows ideas from other antenna tools. No code was
-copied from them.
+chart, convergence check). No code was copied from them.
