@@ -19,6 +19,8 @@ Thumbs.db
 .vscode/
 .idea/
 .remember/
+.claude/settings.local.json
+CLAUDE.local.md
 
 # private notes
 docs/DEVNOTES.md
