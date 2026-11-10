@@ -22,6 +22,10 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
+VERSION = '0.1.0'   # build_pcm.py checks it against metadata.json
+LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
+if not os.path.isfile(LOGO):   # running from the repo
+    LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
 _dialog = None
 
 
@@ -84,7 +88,19 @@ def child_env(python, octave, openems=''):
 
 class Kicad2antDialog(wx.Dialog):
     def __init__(self, parent):
-        super().__init__(parent, title=TITLE + ': antenna simulation', style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX)
+        super().__init__(parent, title='%s %s: antenna simulation' % (TITLE, VERSION),
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX)
+        logo = wx.Image(LOGO) if os.path.isfile(LOGO) else None
+        header = wx.BoxSizer(wx.HORIZONTAL)
+        if logo is not None and logo.IsOk():
+            self.SetIcon(wx.Icon(wx.Bitmap(logo)))
+            header.Add(wx.StaticBitmap(self, bitmap=wx.Bitmap(logo.Scale(40, 40, wx.IMAGE_QUALITY_HIGH))), 0, wx.RIGHT, 10)
+        name = wx.StaticText(self, label=TITLE)
+        name.SetFont(name.GetFont().Scaled(1.6).Bold())
+        about = wx.BoxSizer(wx.VERTICAL)
+        about.Add(name)
+        about.Add(wx.StaticText(self, label='version %s  ·  PCB antenna simulation in openEMS' % VERSION))
+        header.Add(about, 0, wx.ALIGN_CENTER_VERTICAL)
         s = load_settings()
         self.proc = None
         self.out = ''
@@ -200,6 +216,7 @@ class Kicad2antDialog(wx.Dialog):
         self.log.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
 
         root = wx.BoxSizer(wx.VERTICAL)
+        root.Add(header, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         root.Add(grid, 0, wx.ALL, 10)
         root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(oct_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)

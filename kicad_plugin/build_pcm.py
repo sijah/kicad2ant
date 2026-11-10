@@ -11,9 +11,12 @@ PLUGIN = os.path.join(HERE, 'kicad2ant_plugin')
 with open(os.path.join(HERE, 'metadata.json'), encoding='utf-8') as f:
     meta = json.load(f)
 version = meta['versions'][0]['version']
+src = open(os.path.join(PLUGIN, '__init__.py'), encoding='utf-8').read()
+assert "VERSION = '%s'" % version in src, 'set VERSION in kicad2ant_plugin/__init__.py to ' + version
 files = {'metadata.json': os.path.join(HERE, 'metadata.json'),
          'plugins/LICENSE': os.path.join(ROOT, 'LICENSE'),
-         'resources/icon.png': os.path.join(HERE, 'icon64.png')}
+         'resources/icon.png': os.path.join(HERE, 'icon64.png'),
+         'plugins/icon64.png': os.path.join(HERE, 'icon64.png')}   # the logo in the window
 for name in ('__init__.py', 'core.py', 'icon.png'):
     files['plugins/' + name] = os.path.join(PLUGIN, name)
 for name in ('kicad2ant.py', 'extract_antenna.py', 'antenna_sim.m'):
