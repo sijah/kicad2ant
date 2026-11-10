@@ -247,6 +247,7 @@ Both tests print `OK`, need nothing installed beyond Python 3, and run on every 
 | `scripts/kicad2ant.py` | the command line: extracts, finds Octave and openEMS, runs |
 | `scripts/extract_antenna.py` | `.kicad_pcb` → `antenna_geom.m` |
 | `scripts/antenna_sim.m` | model, mesh, openEMS run, post-processing |
+| `scripts/fp_tools.py` | for tuning on a board copy (KiCad's Python): refill zones, save a board footprint to a library |
 | `kicad_plugin/kicad2ant_plugin/` | the KiCad plugin: `__init__.py` (window), `core.py` (helpers) |
 | `kicad_plugin/metadata.json`, `build_pcm.py` | the package's metadata and its builder |
 | `examples/ti_ifa/` | an example board with its coarse results |

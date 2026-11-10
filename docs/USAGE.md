@@ -99,6 +99,7 @@ expect it.
 | `../scripts/extract_antenna.py` | `.kicad_pcb` -> `antenna_geom.m` (also usable alone) |
 | `../scripts/antenna_sim.m` | model, mesh, openEMS run, post-processing |
 | `../scripts/test_extract.py` | extractor self-check: `python ../scripts/test_extract.py` |
+| `../scripts/fp_tools.py` | for tuning on a board copy (KiCad's Python): refill zones, save a board footprint to a library |
 | `../examples/ti_ifa/` | TI SWRA117D meander IFA on a 2-layer board, with coarse results |
 | `SKILL.md` | lets [Claude Code](https://claude.com/claude-code) run it for you (`/kicad2ant`) |
 
