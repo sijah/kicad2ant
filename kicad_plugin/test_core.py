@@ -76,6 +76,9 @@ def test_summary_lines_band_found():
     assert core.summary_lines(p) == ['min S11 -12.0 dB at 2300 MHz = SWEEP EDGE: no resonance in 2300..2600 MHz',
                                      'S11 < -10 dB: 2398 .. 2470 MHz, covers the 2400.0..2483.5 MHz target']
     assert core.summary_lines('nope.txt') == []
+    assert core.band_covered(core.summary_lines(p))
+    assert not core.band_covered(core.summary_lines(REAL))
+    assert not core.band_covered(['S11 < -10 dB: 2398 .. 2450 MHz, MISSES the 2400.0..2483.5 MHz target'])
 
 
 def test_find_result_ignores_stale():
@@ -97,6 +100,11 @@ def test_find_python():
         open(f, 'w').close()
     assert core.find_python(exe, '/nonexistent') == py
     assert core.find_python(py, '/nonexistent') == py
+
+
+def test_pid_alive():
+    assert core.pid_alive(os.getpid())
+    assert not core.pid_alive(4999999) and not core.pid_alive(0)
 
 
 if __name__ == '__main__':

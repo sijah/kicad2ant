@@ -90,6 +90,11 @@ def summary_lines(path):
     return keep
 
 
+def band_covered(lines):
+    """Whether the summary says the -10 dB band covers the target band."""
+    return any(l.startswith('S11 < -10') and ' covers the ' in l for l in lines)
+
+
 def find_python(exe=sys.executable, prefix=sys.prefix):
     """A Python 3 for running kicad2ant.py: KiCad's own if possible (inside KiCad sys.executable is kicad)."""
     d = os.path.dirname(exe)
@@ -119,6 +124,23 @@ def kill_tree(proc):
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def pid_alive(pid):
+    """Whether a process is running. Not os.kill(pid, 0): on Windows that terminates it."""
+    if pid <= 0:
+        return False
+    if os.name == 'nt':
+        out = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH', '/FO', 'CSV'], capture_output=True,
+                             text=True, creationflags=NO_WINDOW).stdout
+        return '"%d"' % pid in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def open_folder(path):

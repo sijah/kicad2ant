@@ -1,0 +1,442 @@
+"""kicad2ant KiCad plugin: simulate the antenna of the open board in openEMS from a toolbar button.
+
+It fills the zones, saves a copy of the board as it is on screen into the run folder and runs scripts/kicad2ant.py
+on that copy (the user's .kicad_pcb / .kicad_pro are never written). Progress comes from openEMS's own log file.
+UI ideas from other antenna tools.
+"""
+import json, os, subprocess, sys, threading, time
+
+import pcbnew
+import wx
+
+try:
+    from . import core
+except ImportError:   # loaded as a plain module (development)
+    import core
+
+PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
+SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
+DEFAULTS = {'mode': 1, 'f0': '2440', 'lo': '', 'hi': '', 'octave': ''}
+MODES = [('Check model (seconds)', 'dry'), ('Coarse (minutes)', 'coarse'), ('Fine (much longer)', 'fine')]
+AUTO = 'Auto: the AE* / ANT* / antenna footprint, pad 1'
+GOOD = 'Good: the -10 dB band covers your target band.'
+NOT_ANTENNA = ('Pick a pad on the antenna. Matching parts are not simulated: '
+               'design the match from the .s1p in the results folder.')
+TITLE = 'kicad2ant'
+_dialog = None
+_frame_bound = False
+
+
+def script_path():
+    installed = os.path.join(PLUGIN_DIR, 'scripts', 'kicad2ant.py')
+    return installed if os.path.isfile(installed) else \
+        os.path.normpath(os.path.join(PLUGIN_DIR, '..', '..', 'scripts', 'kicad2ant.py'))
+
+
+def load_settings():
+    s = dict(DEFAULTS)
+    try:
+        with open(SETTINGS, encoding='utf-8') as f:
+            s.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return s
+
+
+def save_settings(s):
+    try:
+        with open(SETTINGS, 'w', encoding='utf-8') as f:
+            json.dump(s, f)
+    except OSError:
+        pass
+
+
+def selected_feed():
+    """(ref, pad number) of the selected pad, or pad 1 of a selected footprint; a message string when the
+    selection is not on an antenna footprint; None when nothing is selected."""
+    board = pcbnew.GetBoard()
+    hit = None
+    for fp in board.GetFootprints():
+        pad = next((p for p in fp.Pads() if p.IsSelected()), None)
+        if pad is not None:
+            hit = (fp, pad.GetNumber())
+            break
+    if hit is None:
+        fp = next((f for f in board.GetFootprints() if f.IsSelected()), None)
+        hit = (fp, '1') if fp is not None else None
+    if hit is None:
+        return None
+    fp, num = hit
+    ref = fp.GetReference()
+    return (ref, num) if core.is_antenna_ref(ref, fp.GetFPIDAsString()) else NOT_ANTENNA
+
+
+def child_env(python, octave):
+    env = dict(os.environ, PYTHONUNBUFFERED='1')
+    kicad_dirs = {os.path.normcase(os.path.dirname(sys.executable)), os.path.normcase(sys.prefix)}
+    if not any(os.path.normcase(python).startswith(d) for d in kicad_dirs):
+        env.pop('PYTHONHOME', None)   # KiCad's settings would break another Python
+        env.pop('PYTHONPATH', None)
+    if octave:
+        env['OCTAVE'] = octave
+    return env
+
+
+class Kicad2antDialog(wx.Dialog):
+    def __init__(self, parent):
+        super().__init__(parent, title=TITLE + ': antenna simulation', style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        s = load_settings()
+        self.proc = None
+        self.out = ''
+        self.mode = 'coarse'
+        self.feed = None
+        self.started = 0.0
+        self.log_pos = 0
+        self.log_rest = ''
+        self.best = 0.0
+        self.last_line = ''
+        self.stopped = False
+
+        self.mode_ctl = wx.Choice(self, choices=[m[0] for m in MODES])
+        self.mode_ctl.SetSelection(s['mode'] if s['mode'] in (0, 1, 2) else 1)
+        self.mode_ctl.SetToolTip('Check model: builds the model and draws it, no simulation. Run it first.\n'
+                                 'Coarse: for tuning. Fine: for the numbers you quote.')
+        self.f0 = wx.TextCtrl(self, value=s['f0'], size=(70, -1))
+        self.lo = wx.TextCtrl(self, value=s['lo'], size=(70, -1))
+        self.hi = wx.TextCtrl(self, value=s['hi'], size=(70, -1))
+        for c in (self.lo, self.hi):
+            c.SetToolTip('Target band in MHz. Leave empty: 2400 to 2483.5 at 2440 MHz, else f0 +/- 2 %.')
+        grid = wx.FlexGridSizer(0, 6, 6, 8)
+        for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('', wx.StaticText(self)),
+                           ('Band from (MHz)', self.lo), ('to (MHz)', self.hi), ('', wx.StaticText(self))):
+            grid.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(ctl, 0, wx.ALIGN_CENTER_VERTICAL)
+
+        self.feed_txt = wx.StaticText(self, label=AUTO)
+        use_sel = wx.Button(self, label='Use selected pad')
+        use_sel.SetToolTip('Click the feed pad of the antenna in the PCB editor (this window stays open), then press this.')
+        use_sel.Bind(wx.EVT_BUTTON, self.on_use_selected)
+        auto = wx.Button(self, label='Auto')
+        auto.Bind(wx.EVT_BUTTON, lambda e: self.set_feed(None))
+        feed_row = wx.BoxSizer(wx.HORIZONTAL)
+        feed_row.Add(wx.StaticText(self, label='Feed:'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        feed_row.Add(self.feed_txt, 1, wx.ALIGN_CENTER_VERTICAL)
+        feed_row.Add(use_sel, 0, wx.LEFT, 6)
+        feed_row.Add(auto, 0, wx.LEFT, 4)
+
+        self.octave = wx.TextCtrl(self, value=s['octave'])
+        self.octave.SetToolTip('Leave empty to find Octave by itself. Set it if the run says Octave was not found.')
+        browse = wx.Button(self, label='...', size=(30, -1))
+        browse.Bind(wx.EVT_BUTTON, self.on_browse)
+        oct_row = wx.BoxSizer(wx.HORIZONTAL)
+        oct_row.Add(wx.StaticText(self, label='Octave (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        oct_row.Add(self.octave, 1)
+        oct_row.Add(browse, 0, wx.LEFT, 4)
+
+        note = wx.StaticText(self, label='Simulate fills the zones (like pressing B) and runs on a copy of the board as '
+                                         'it is on screen. Your board file is not changed.')
+        note.Wrap(560)
+
+        self.run_btn = wx.Button(self, label='Simulate')
+        self.run_btn.Bind(wx.EVT_BUTTON, self.on_run)
+        self.stop_btn = wx.Button(self, label='Stop')
+        self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop)
+        self.stop_btn.Disable()
+        self.folder_btn = wx.Button(self, label='Open results folder')
+        self.folder_btn.Bind(wx.EVT_BUTTON, lambda e: core.open_folder(os.path.join(self.out, 'results')))
+        self.folder_btn.Disable()
+        close = wx.Button(self, wx.ID_CLOSE, 'Close')
+        close.Bind(wx.EVT_BUTTON, lambda e: self.Close())
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        for b in (self.run_btn, self.stop_btn, self.folder_btn):
+            buttons.Add(b, 0, wx.RIGHT, 6)
+        buttons.AddStretchSpacer()
+        buttons.Add(close)
+
+        self.phase = wx.StaticText(self, label='')
+        self.gauge = wx.Gauge(self, range=1000, size=(-1, 18))
+        self.elapsed = wx.StaticText(self, label='')
+        self.summary = wx.StaticText(self, label='')
+        self.picture = wx.StaticBitmap(self)
+        self.log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP, size=(-1, 90))
+        self.log.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+
+        root = wx.BoxSizer(wx.VERTICAL)
+        root.Add(grid, 0, wx.ALL, 10)
+        root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(oct_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(note, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(self.phase, 0, wx.LEFT | wx.RIGHT, 10)
+        root.Add(self.gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        root.Add(self.elapsed, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(self.summary, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(self.picture, 0, wx.ALIGN_CENTER | wx.LEFT | wx.RIGHT, 10)
+        root.Add(self.log, 1, wx.EXPAND | wx.ALL, 10)
+        self.SetSizer(root)
+        self.SetMinSize((600, -1))
+        self.Fit()
+
+        self.timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.show_previous()
+
+    # ------------------------------------------------------------------ feed and settings
+
+    def set_feed(self, feed):
+        self.feed = feed
+        self.feed_txt.SetLabel(AUTO if feed is None else '%s pad %s' % feed)
+        self.Layout()
+
+    def on_use_selected(self, _):
+        hit = selected_feed()
+        if hit is None:
+            wx.MessageBox('Nothing is selected. Click the feed pad of the antenna in the PCB editor first.', TITLE)
+        elif isinstance(hit, str):
+            wx.MessageBox(hit, TITLE, wx.ICON_INFORMATION)
+        else:
+            self.set_feed(hit)
+
+    def on_browse(self, _):
+        with wx.FileDialog(self, 'Octave program (octave-gui.exe or octave)') as d:
+            if d.ShowModal() == wx.ID_OK:
+                self.octave.SetValue(d.GetPath())
+
+    def show_previous(self):
+        """Shows the newest earlier result of this board for the chosen mode."""
+        try:
+            out = core.run_dir(pcbnew.GetBoard().GetFileName())
+        except ValueError:
+            return
+        mode = MODES[self.mode_ctl.GetSelection()][1]
+        res = core.find_result(out, mode, 0)
+        if res:
+            self.out = out
+            self.show_result(mode, res, 'Last run:')
+
+    # ------------------------------------------------------------------ run
+
+    def on_run(self, _):
+        if self.proc is not None:
+            return
+        mode = MODES[self.mode_ctl.GetSelection()][1]
+        f0, lo, hi = (c.GetValue().strip() for c in (self.f0, self.lo, self.hi))
+        try:
+            if float(f0) <= 0 or bool(lo) != bool(hi) or (lo and float(lo) >= float(hi)):
+                raise ValueError
+        except ValueError:
+            wx.MessageBox('f0 must be a frequency in MHz. The band needs both ends (from below to), or none.', TITLE)
+            return
+        python = core.find_python()
+        if not python:
+            wx.MessageBox('Python 3 was not found: install it from python.org.', TITLE, wx.ICON_WARNING)
+            return
+        board = pcbnew.GetBoard()
+        try:
+            out = core.run_dir(board.GetFileName())
+        except ValueError:
+            wx.MessageBox('Save the board once first.', TITLE)
+            return
+        os.makedirs(out, exist_ok=True)
+        lock = os.path.join(out, '.running')
+        try:
+            with open(lock) as f:
+                if core.pid_alive(int(f.read().strip() or 0)):
+                    wx.MessageBox('Another simulation is using this board folder:\n' + out, TITLE)
+                    return
+        except (OSError, ValueError):
+            pass
+        save_settings({'mode': self.mode_ctl.GetSelection(), 'f0': f0, 'lo': lo, 'hi': hi,
+                       'octave': self.octave.GetValue().strip()})
+
+        self.phase.SetLabel('Filling zones and saving a copy of the board')
+        wx.SafeYield()
+        if not pcbnew.ZONE_FILLER(board).Fill(board.Zones()):
+            self.add_log('warning: the zone fill reported a problem')
+        pcbnew.Refresh()
+        copy = os.path.join(out, 'board.kicad_pcb')
+        pcbnew.SaveBoard(copy, board, True)   # True: leave the open project's settings where they are
+
+        ref, num = self.feed if self.feed else ('auto', '')
+        cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi))
+        self.out, self.mode, self.started = out, mode, time.time()
+        self.log_pos, self.log_rest, self.best, self.last_line, self.stopped = 0, '', 0.0, '', False
+        self.log.Clear()
+        self.add_log(' '.join(cmd))
+        self.summary.SetLabel('')
+        self.summary.SetForegroundColour(wx.NullColour)
+        self.picture.SetBitmap(wx.NullBitmap)
+        self.gauge.SetValue(0)
+        self.phase.SetLabel('Starting')
+        kw = {'creationflags': core.NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}
+        try:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                         encoding='utf-8', errors='replace', cwd=out,
+                                         env=child_env(python, self.octave.GetValue().strip()), **kw)
+        except OSError as e:
+            self.phase.SetLabel('')
+            wx.MessageBox('Could not start the simulation: %s' % e, TITLE, wx.ICON_WARNING)
+            return
+        with open(lock, 'w') as f:
+            f.write(str(self.proc.pid))
+        self.run_btn.Disable()
+        self.stop_btn.Enable()
+        self.timer.Start(1000)
+        threading.Thread(target=self.reader, args=(self.proc,), daemon=True).start()
+
+    def reader(self, proc):
+        for line in proc.stdout:
+            wx.CallAfter(self.add_log, line.rstrip())
+        wx.CallAfter(self.finished, proc.wait())
+
+    def add_log(self, line):
+        if not self:   # the dialog is gone
+            return
+        self.log.AppendText(line + '\n')
+        if line.strip():
+            self.last_line = line.strip()
+        ph = core.phase(line)
+        if ph:
+            self.phase.SetLabel(ph)
+
+    def on_tick(self, _):
+        if not self:
+            return
+        secs = int(time.time() - self.started)
+        self.elapsed.SetLabel('%d:%02d elapsed' % (secs // 60, secs % 60))
+        log = os.path.join(self.out, 'sim_' + ('coarse' if self.mode == 'dry' else self.mode), 'openEMS.log')
+        try:   # a log older than this run is the previous run's
+            if os.path.getmtime(log) < self.started:
+                return
+            if os.path.getsize(log) < self.log_pos:   # the folder was cleared and the log restarted
+                self.log_pos, self.log_rest = 0, ''
+            with open(log, 'rb') as f:
+                f.seek(self.log_pos)
+                data = f.read()
+            self.log_pos += len(data)
+        except OSError:
+            return
+        lines = (self.log_rest + data.decode('utf-8', 'replace')).split('\n')
+        self.log_rest = lines.pop()
+        target = core.TARGET_DB.get(self.mode)
+        for line in lines:
+            p = core.progress(line, target)
+            if p is not None:
+                self.best = max(self.best, p)
+                self.gauge.SetValue(int(self.best * 1000))
+                self.phase.SetLabel('Simulating %d %%' % int(self.best * 100))
+            else:
+                ph = core.phase(line)
+                if ph:
+                    self.phase.SetLabel(ph)
+
+    def finished(self, code):
+        if not self:
+            return
+        self.timer.Stop()
+        self.proc = None
+        try:
+            os.remove(os.path.join(self.out, '.running'))
+        except OSError:
+            pass
+        self.run_btn.Enable()
+        self.stop_btn.Disable()
+        res = core.find_result(self.out, self.mode, self.started)
+        if code == 0 and res:
+            self.gauge.SetValue(1000)
+            self.phase.SetLabel('Done')
+            self.show_result(self.mode, res, '')
+        else:
+            self.phase.SetLabel('Stopped' if self.stopped else 'Failed')
+            self.summary.SetForegroundColour(wx.Colour(170, 20, 20))
+            self.summary.SetLabel('Stopped.' if self.stopped else (self.last_line or 'Failed: see the log below.'))
+            self.summary.Wrap(560)
+        self.folder_btn.Enable(os.path.isdir(os.path.join(self.out, 'results')))
+        self.Layout()
+        self.Fit()
+
+    def show_result(self, mode, res, title):
+        summary, name = res
+        lines = core.summary_lines(summary) if summary else ['Model built: check the picture (ground grey, '
+                                                             'antenna orange, port magenta on the feed pad).']
+        if core.band_covered(lines):
+            lines.append(GOOD)
+        self.summary.SetForegroundColour(wx.NullColour)
+        self.summary.SetLabel('\n'.join(([title] if title else []) + lines))
+        self.summary.Wrap(560)
+        pic = os.path.join(self.out, 'results', name + ('_geometry.png' if mode == 'dry' else '_%s_s11_zin.png' % mode))
+        if os.path.isfile(pic):
+            img = wx.Image(pic)
+            if img.IsOk() and img.GetWidth() > 560:
+                img.Rescale(560, int(img.GetHeight() * 560 / img.GetWidth()), wx.IMAGE_QUALITY_HIGH)
+            self.picture.SetBitmap(wx.Bitmap(img))
+        self.folder_btn.Enable()
+        self.Layout()
+        self.Fit()
+
+    # ------------------------------------------------------------------ stop and close
+
+    def stop_run(self):
+        proc = self.proc
+        if proc is None:
+            return
+        self.stopped = True
+        core.kill_tree(proc)
+        log = os.path.join(self.out, 'sim_' + ('coarse' if self.mode == 'dry' else self.mode), 'openEMS.log')
+        if os.path.isfile(log):
+            try:
+                open(log, 'a').close()
+            except OSError:   # openEMS still holds it
+                wx.MessageBox('openEMS is still running: end it in Task Manager.', TITLE, wx.ICON_WARNING)
+
+    def on_stop(self, _):
+        self.stop_run()
+
+    def on_close(self, _):
+        self.timer.Stop()
+        self.stop_run()
+        self.Destroy()
+
+
+def _frame_closing(event):
+    """KiCad's PCB editor is closing: do not leave openEMS running."""
+    if _dialog:
+        _dialog.stop_run()
+    event.Skip()
+
+
+def _forget_dialog(event):
+    global _dialog
+    if event.GetEventObject() is _dialog:
+        _dialog = None
+    event.Skip()
+
+
+class Kicad2antPlugin(pcbnew.ActionPlugin):
+    def defaults(self):
+        self.name = 'kicad2ant: antenna simulation'
+        self.category = 'Simulation'
+        self.description = 'Simulate the PCB antenna of this board in openEMS (S11, band, gain, pattern)'
+        self.show_toolbar_button = True
+        self.icon_file_name = os.path.join(PLUGIN_DIR, 'icon.png')
+        self.dark_icon_file_name = self.icon_file_name
+
+    def Run(self):
+        global _dialog, _frame_bound
+        if not pcbnew.GetBoard().GetFileName():
+            wx.MessageBox('Save the board once first.', TITLE)
+            return
+        if _dialog:
+            _dialog.Raise()
+            return
+        frame = wx.FindWindowByName('PcbFrame')
+        if frame is not None and not _frame_bound:
+            frame.Bind(wx.EVT_CLOSE, _frame_closing)
+            _frame_bound = True
+        _dialog = Kicad2antDialog(frame)
+        _dialog.Bind(wx.EVT_WINDOW_DESTROY, _forget_dialog)
+        _dialog.Show()   # not modal: the feed pad can be clicked in the editor meanwhile
+
+
+Kicad2antPlugin().register()
