@@ -11,7 +11,7 @@
 % add skip_fdtd=1 to redo only the post-processing on saved fields.
 
 close all; clc;
-if ~exist('res', 'var'), res = 'coarse'; end        % 'coarse' first, then 'fine'
+if ~exist('res', 'var'), res = 'fast'; end          % 'fast' (S11 only) while tuning, 'coarse' to confirm, 'fine' to report
 if ~exist('skip_fdtd', 'var'), skip_fdtd = 0; end   % 1 = re-run post-processing on the saved fields
 if ~exist('dry_run', 'var'), dry_run = 0; end       % 1 = build the model, write the XML and geometry plot, stop
 if ~exist('run_dir', 'var'), run_dir = pwd; end     % holds antenna_geom.m; sim_<res>/ and results/ go here
@@ -39,7 +39,9 @@ name = regexprep(geom.ref, '[^\w-]', '_');
 %% parameters
 if strcmp(res, 'fine'), cell_ant = 0.2; air_div = 20; nz = 4; end_crit = 1e-5;
 else                    cell_ant = 0.5; air_div = 15; nz = 2; end_crit = 1e-4; end
-air = max(5, c0 / f0 / unit / 4);  % air on every side: lambda/4 at f0, then the PML
+% fast: S11 only. No thirds-rule lines (larger timestep), MUR and lambda/8 air instead of PML and lambda/4, -30 dB, no far field
+fast = strcmp(res, 'fast'); if fast, end_crit = 1e-3; end
+air = max(5, c0 / f0 / unit / (4 + 4*fast));  % air on every side: lambda/4 at f0 (fast: lambda/8), then the boundary
 % the excitation reaches 30 % of the band past its top: the far field comes out wrong near the
 % upper edge of the Gaussian's band while S11 still looks fine (kicad2ems, docs/maintenance.md)
 f_ex = f0 + 0.3 * fc; fc_ex = 1.3 * fc;
@@ -48,7 +50,8 @@ f_ex = f0 + 0.3 * fc; fc_ex = 1.3 * fc;
 nrts = 300000;                     % step limit: a run that hits it did not converge (warned in the summary)
 FDTD = InitFDTD('NrTS', nrts, 'EndCriteria', end_crit);
 FDTD = SetGaussExcite(FDTD, f_ex, fc_ex);
-FDTD = SetBoundaryCond(FDTD, {'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8'});
+if fast, FDTD = SetBoundaryCond(FDTD, {'MUR' 'MUR' 'MUR' 'MUR' 'MUR' 'MUR'});
+else, FDTD = SetBoundaryCond(FDTD, {'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8'}); end
 CSX = InitCSX();
 zmax = max(geom.cu_z);
 for k = 1:size(geom.diel, 1)       % one dielectric per copper pair, extruded over the outline
@@ -78,14 +81,15 @@ fine = [geom.ant_box(1:2) - 3, geom.ant_box(3:4) + 3];
 axn = 'xy';
 for a = 1:2
   e = geom.(['edge_' axn(a)]);
-  pri = [geom.port([a a+3]), e(:, 1)' + e(:, 2)' * cell_ant/3, e(:, 1)' - e(:, 2)' * 2*cell_ant/3];
+  if fast, pri = [geom.port([a a+3]), e(:, 1)'];   % lines on the copper edges themselves
+  else, pri = [geom.port([a a+3]), e(:, 1)' + e(:, 2)' * cell_ant/3, e(:, 1)' - e(:, 2)' * 2*cell_ant/3]; end
   low = [geom.(['mesh_' axn(a)]), fine(a):cell_ant:fine(a+2), bb(a):d_sub:bb(a+2), bb(a), bb(a+2), bb(a) - air, bb(a+2) + air];
   for pass = 1:2                   % before and after smoothing
     p = sort(pri); keep = p(1);
     for t = p(2:end), if t - keep(end) > cell_ant/3, keep(end+1) = t; end, end
     w = sort(low); w = w(arrayfun(@(t) min(abs(keep - t)) > cell_ant/2, w));
     v = sort([keep w]); out = v(1);
-    for t = v(2:end), if t - out(end) > cell_ant/4 || any(keep == t), out(end+1) = t; end, end
+    for t = v(2:end), if t - out(end) > cell_ant/4 * (1 + fast) || any(keep == t), out(end+1) = t; end, end   % fast: no cell under cell_ant/2 between grids
     mesh.(axn(a)) = out;
     if pass == 1, low = SmoothMeshLines(out, lam / air_div, 1.4); end
   end
@@ -97,13 +101,13 @@ end
 zl = unique(round(zl * 1e5) / 1e5);
 mesh.z = SmoothMeshLines(zl, lam / air_div, 1.4);
 dmax = lam / air_div;              % the PML: 8 more cells on every side
-for a = 'xyz', v = mesh.(a); mesh.(a) = [v(1) - (8:-1:1) * dmax, v, v(end) + (1:8) * dmax]; end
+if ~fast, for a = 'xyz', v = mesh.(a); mesh.(a) = [v(1) - (8:-1:1) * dmax, v, v(end) + (1:8) * dmax]; end, end
 CSX = DefineRectGrid(CSX, unit, mesh);
 ncell = numel(mesh.x) * numel(mesh.y) * numel(mesh.z);
 dmin = min([diff(mesh.x) diff(mesh.y) diff(mesh.z)]);
 rmax = max(cellfun(@(v) max([diff(v(2:end)) ./ diff(v(1:end-1)), diff(v(1:end-1)) ./ diff(v(2:end))]), {mesh.x, mesh.y, mesh.z}));
 fprintf('%s mesh: %d x %d x %d = %.2f Mcells, smallest cell %.3f mm, worst neighbour ratio %.2f\n', res, numel(mesh.x), numel(mesh.y), numel(mesh.z), ncell/1e6, dmin, rmax);
-[CSX, nf2ff] = CreateNF2FFBox(CSX, 'nf2ff', [mesh.x(10) mesh.y(10) mesh.z(10)], [mesh.x(end-9) mesh.y(end-9) mesh.z(end-9)]);
+if ~fast, [CSX, nf2ff] = CreateNF2FFBox(CSX, 'nf2ff', [mesh.x(10) mesh.y(10) mesh.z(10)], [mesh.x(end-9) mesh.y(end-9) mesh.z(end-9)]); end
 
 %% geometry plot: every copper layer, whole board and around the antenna
 out = fullfile(here, 'results'); [~,~] = mkdir(out);
@@ -193,8 +197,9 @@ while hi < numel(freq) && s11dB(hi+1) < -10, hi = hi + 1; end
 ix = find(diff(sign(imag(Zin))) ~= 0);              % reactance zero crossings
 f_x = freq(ix) - imag(Zin(ix)) .* (freq(ix+1) - freq(ix)) ./ (imag(Zin(ix+1)) - imag(Zin(ix)));
 
-%% results: far field over frequency (coarse full sphere), pattern at the resonance
-ffr = unique([linspace(f0 - fc, f0 + fc, 11), f0, f_res]);
+%% results: far field over frequency (coarse full sphere), pattern at the resonance (not in fast)
+if ~fast
+ffr =unique([linspace(f0 - fc, f0 + fc, 11), f0, f_res]);
 pf = calcPort(port, Sim_Path, ffr);
 th = 0:5:180; ph = 0:5:355;
 sph = CalcNF2FF(nf2ff, Sim_Path, ffr, th*pi/180, ph*pi/180, 'Outfile', 'ff_sphere.h5', 'Mode', 1);
@@ -207,6 +212,7 @@ tc = -180:2:180;
 cut = CalcNF2FF(nf2ff, Sim_Path, ffr(ip), tc*pi/180, [0 90]*pi/180, 'Outfile', 'ff_cuts.h5', 'Mode', 1);
 cxy = CalcNF2FF(nf2ff, Sim_Path, ffr(ip), pi/2, tc*pi/180, 'Outfile', 'ff_xy.h5', 'Mode', 1);
 dB = @(E) 20*log10(max(E(:)', 1e-9) / emax) + 10*log10(D(ip));   % directivity, dBi
+end
 
 %% report
 fid = fopen(files{1}, 'w'); assert(fid > 0, 'cannot write %s', files{1});
@@ -214,6 +220,7 @@ for fd = [1 fid]
   fprintf(fd, '%s %s run (%.0f s, %d x %d x %d cells, smallest %.3f mm)\n', name, res, t_run, numel(mesh.x), numel(mesh.y), numel(mesh.z), dmin);
   fprintf(fd, 'board: %d copper layers, %.3f mm, epsR %s; ground %s; port %s\n', numel(geom.cu_z), zmax, ...
           mat2str(round(geom.diel(:, 3)' * 100) / 100), geom.gnd_net, geom.port_kind);
+  if fast, fprintf(fd, 'fast (S11 only, no far field): confirm with coarse\n'); end
   if at_edge
     fprintf(fd, 'min S11 %.1f dB at %.0f MHz = SWEEP EDGE: no resonance in %.0f..%.0f MHz (retune, or widen fc)\n', s_min, f_res/1e6, freq(1)/1e6, freq(end)/1e6);
   else
@@ -231,6 +238,7 @@ for fd = [1 fid]
   if have_meas
     fprintf(fd, 'measured (measured.s1p): min S11 %.1f dB at %.0f MHz, %+.0f MHz from the simulation\n', sm_min, fm(im)/1e6, (fm(im) - f_res)/1e6);
   end
+  if fast, continue; end
   fprintf(fd, '   f MHz  S11 dB   D dBi  rad eff %%  gain dBi  realized gain dBi\n');
   for k = 1:numel(ffr)
     flag = ''; if s11f(k) > -3, flag = '  (mismatched: rad eff is rough)'; end
@@ -272,8 +280,9 @@ title({sprintf('%s %s: S11 %.0f..%.0f MHz', name, res, freq(1)/1e6, freq(end)/1e
        sprintf('red = %.0f MHz, blue = target band edges%s', f0/1e6, repmat(', green = measured', 1, have_meas))});
 print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r120');
 
+if fast, return; end
 h = figure('visible', 'off');
-plot(tc, dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB(cxy.E_norm{1}), 'k:', 'LineWidth', 1.5);
+plot(tc,dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB(cxy.E_norm{1}), 'k:', 'LineWidth', 1.5);
 grid on; xlim([-180 180]); ylim([-30 ceil(10*log10(D(ip))) + 2]);
 xlabel('angle (deg): \theta for xz / yz (negative = \phi+180 side), \phi for xy'); ylabel('directivity (dBi)');
 legend('xz (\phi = 0)', 'yz (\phi = 90)', 'xy (\theta = 90)', 'location', 'south');
