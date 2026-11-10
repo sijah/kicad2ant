@@ -5,8 +5,9 @@
 % Model: one dielectric per copper pair, copper as PEC sheets, GND vias / plated holes as PEC lines,
 % 50 ohm lumped port at the feed pad, board in air, PML_8 on all sides.  Other nets' copper and the
 % parts are not modelled.
-% By hand, in the run folder (holding antenna_geom.m):
-%   res='coarse'; f0=2.44e9; band_t=[2400 2483.5]*1e6; run('<scripts>/antenna_sim.m')
+% kicad2ant.py copies this file into the run folder next to antenna_geom.m and writes run_sim.m there
+% with the run's settings: run('<run folder>/run_sim.m') in Octave runs it again. By hand:
+%   res='coarse'; f0=2.44e9; band_t=[2400 2483.5]*1e6; run('<run folder>/antenna_sim.m')
 % add skip_fdtd=1 to redo only the post-processing on saved fields.
 
 close all; clc;

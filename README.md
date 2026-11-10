@@ -117,8 +117,15 @@ The window's fields:
 
 While it runs you see the phase, a progress bar read from openEMS's own log, and the elapsed time. **Stop** ends
 the run and everything it started. When it is done the window shows the result lines and the S11 plot;
-**Open results folder** has all the files, and **Open run folder** has the model files (`antenna_geom.m` is the
-geometry Octave reads, `board.kicad_pcb` is the copy that was simulated).
+**Open results folder** has all the files, and **Open run folder** has the model files:
+
+| File | What it is |
+|---|---|
+| `antenna_geom.m` | the geometry read from the board: antenna, ground, stackup, outline, port |
+| `antenna_sim.m` | the openEMS model and run, a copy of the one that was used |
+| `run_sim.m` | this run's settings. Open it in Octave and run it to run the simulation again, or to change it by hand |
+| `board.kicad_pcb` | the copy of the board that was simulated |
+| `sim_<mode>/` | openEMS's own files: `antenna.xml` (the model), the log and the field dumps |
 
 Two things to know:
 

@@ -66,9 +66,15 @@ if not a.post:
 ems = openems()
 if ' ' in ems: sys.exit(f'openEMS is in a path with a space ({ems}): nf2ff cannot run there, move it and set OPENEMS')
 q = lambda s: s.replace("'", "''")
-script = (f"res='{'coarse' if a.mode == 'dry' else a.mode}'; dry_run={int(a.mode == 'dry')}; skip_fdtd={int(a.post)}; "
-          f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}]; run_dir='{q(out)}'; ems='{q(ems)}'; "
-          f"run('{q(os.path.join(HERE, 'antenna_sim.m'))}')")
+# the run folder gets the whole model as .m files: antenna_geom.m, antenna_sim.m and run_sim.m, which reruns it in Octave
+shutil.copy(os.path.join(HERE, 'antenna_sim.m'), out)
+with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
+    f.write(f"% kicad2ant: this run's settings. In Octave, run this file to run it again.\n"
+            f"% dry_run=1 builds the model only; skip_fdtd=1 redoes only the post-processing.\n"
+            f"res='{'coarse' if a.mode == 'dry' else a.mode}'; dry_run={int(a.mode == 'dry')}; skip_fdtd={int(a.post)};\n"
+            f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}];\nrun_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"
+            f"run(fullfile(run_dir, 'antenna_sim.m'))\n")
+script = f"run('{q(os.path.join(out, 'run_sim.m'))}')"
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display
 r = subprocess.run([octave(), '--no-gui', '--eval', script])
 if a.view and r.returncode == 0:
