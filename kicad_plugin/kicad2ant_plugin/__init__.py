@@ -14,8 +14,11 @@ except ImportError:   # loaded as a plain module (development)
 
 PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
-DEFAULTS = {'mode': 1, 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False}
-MODES = [('Check model (seconds)', 'dry'), ('Coarse (minutes)', 'coarse'), ('Fine (much longer)', 'fine')]
+DEFAULTS = {'mode': 'fast', 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False}
+LABELS = {'dry': 'Check model (seconds)', 'fast': 'Fast: S11 only (about a minute)',
+          'coarse': 'Coarse: S11, gain, pattern (minutes)', 'fine': 'Fine: final numbers (much longer)'}
+MODES = [(LABELS[m], m) for m, _ in core.MODES]   # (label, mode) in list order
+HELP = dict(core.MODES)
 AUTO = 'Auto: the AE* / ANT* / antenna footprint, pad 1'
 GOOD = 'Good: the -10 dB band covers your target band.'
 THEMES = ['System', 'Light', 'Dark']
@@ -104,7 +107,7 @@ class Kicad2antDialog(wx.Dialog):
         s = load_settings()
         self.proc = None
         self.out = ''
-        self.mode = 'coarse'
+        self.mode = 'fast'
         self.feed = None
         self.started = 0.0
         self.log_pos = 0
@@ -115,9 +118,11 @@ class Kicad2antDialog(wx.Dialog):
         self.summary_text = ''
 
         self.mode_ctl = wx.Choice(self, choices=[m[0] for m in MODES])
-        self.mode_ctl.SetSelection(s['mode'] if s['mode'] in (0, 1, 2) else 1)
-        self.mode_ctl.SetToolTip('Check model: builds the model and draws it, no simulation. Run it first.\n'
-                                 'Coarse: for tuning. Fine: for the numbers you quote.')
+        self.mode_ctl.SetSelection([m for _, m in MODES].index(core.mode_key(s['mode'])))
+        self.mode_ctl.SetToolTip('\n'.join('%s: %s' % (label.split(':')[0].split(' (')[0], HELP[m]) for label, m in MODES))
+        self.mode_help = wx.StaticText(self, label='')   # what the chosen mode does, in one line
+        self.mode_ctl.Bind(wx.EVT_CHOICE, lambda e: self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]]))
+        self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]])
         self.f0 = wx.TextCtrl(self, value=s['f0'], size=(70, -1))
         self.lo = wx.TextCtrl(self, value=s['lo'], size=(70, -1))
         self.hi = wx.TextCtrl(self, value=s['hi'], size=(70, -1))
@@ -214,10 +219,20 @@ class Kicad2antDialog(wx.Dialog):
         self.picture = wx.StaticBitmap(self)
         self.log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 140))   # wraps: long lines stay readable
         self.log.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        self.copy_btn = wx.Button(self, label='Copy log')
+        self.copy_btn.SetToolTip('Puts the whole log on the clipboard, e.g. to paste into an issue.')
+        self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_log)
+        self.clear_btn = wx.Button(self, label='Clear log')
+        self.clear_btn.Bind(wx.EVT_BUTTON, lambda e: self.log.Clear())
+        log_row = wx.BoxSizer(wx.HORIZONTAL)
+        log_row.Add(wx.StaticText(self, label='Log'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        log_row.Add(self.copy_btn, 0, wx.RIGHT, 6)
+        log_row.Add(self.clear_btn)
 
         root = wx.BoxSizer(wx.VERTICAL)
         root.Add(header, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
-        root.Add(grid, 0, wx.ALL, 10)
+        root.Add(grid, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        root.Add(self.mode_help, 0, wx.ALL, 10)
         root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(oct_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(ems_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
@@ -230,6 +245,7 @@ class Kicad2antDialog(wx.Dialog):
         root.Add(self.elapsed, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(self.summary, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(self.picture, 0, wx.ALIGN_CENTER | wx.LEFT | wx.RIGHT, 10)
+        root.Add(log_row, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         root.Add(self.log, 1, wx.EXPAND | wx.ALL, 10)
         self.SetSizer(root)
         self.SetMinSize((600, -1))
@@ -248,7 +264,7 @@ class Kicad2antDialog(wx.Dialog):
     # ------------------------------------------------------------------ feed and settings
 
     def settings(self):
-        return {'mode': self.mode_ctl.GetSelection(), 'f0': self.f0.GetValue().strip(), 'lo': self.lo.GetValue().strip(),
+        return {'mode': MODES[self.mode_ctl.GetSelection()][1], 'f0': self.f0.GetValue().strip(), 'lo': self.lo.GetValue().strip(),
                 'hi': self.hi.GetValue().strip(), 'octave': self.octave.GetValue().strip(),
                 'openems': self.openems.GetValue().strip(), 'theme': self.theme_ctl.GetSelection(),
                 'outdir': self.outdir.GetValue().strip(), 'view': self.view.GetValue(),
@@ -393,6 +409,7 @@ class Kicad2antDialog(wx.Dialog):
         core.take_lock(out, self.proc.pid)   # kicad2ant.py takes it too; the same pid either way
         self.run_btn.Disable()
         self.stop_btn.Enable()
+        self.clear_btn.Disable()   # the log holds the failure reason until the run ends
         self.run_dir_btn.Enable()   # the folder exists now: watch antenna_geom.m appear
         self.timer.Start(1000)
         threading.Thread(target=self.reader, args=(self.proc, out), daemon=True).start()
@@ -403,6 +420,13 @@ class Kicad2antDialog(wx.Dialog):
         code = proc.wait()
         core.release_lock(out, proc.pid)   # here, not in finished(): the dialog may be gone by now
         wx.CallAfter(self.finished, code)
+
+    def on_copy_log(self, _):
+        if wx.TheClipboard.Open():
+            wx.TheClipboard.SetData(wx.TextDataObject(self.log.GetValue()))
+            wx.TheClipboard.Close()
+            self.copy_btn.SetLabel('Copied')
+            wx.CallLater(2000, lambda: self and self.copy_btn.SetLabel('Copy log'))
 
     def add_log(self, line):
         if not self:   # the dialog is gone
@@ -450,6 +474,7 @@ class Kicad2antDialog(wx.Dialog):
         self.proc = None
         self.run_btn.Enable()
         self.stop_btn.Disable()
+        self.clear_btn.Enable()
         res = core.find_result(self.out, self.mode, self.started)
         if code == 0 and res:
             self.gauge.SetValue(1000)

@@ -116,6 +116,26 @@ def test_failure_line():
     assert core.failure_line(['', 'failed (see above)']) == ''
 
 
+def test_mode_key_legacy_index():
+    assert [core.mode_key(i) for i in (0, 1, 2)] == ['dry', 'coarse', 'fine']   # 0.1.0 saved the list index
+    assert core.mode_key('fast') == 'fast' and core.mode_key(7) == 'fast' and core.mode_key(None) == 'fast'
+    assert core.mode_key('bogus') == 'fast' and core.mode_key(True) == 'fast'
+
+
+def test_fast_target_and_cmd():
+    assert core.TARGET_DB['fast'] == 30.0
+    assert core.build_cmd('py', 'k.py', 'b', 'o', 'fast')[4:6] == ['--mode', 'fast']
+    assert [m for m, _ in core.MODES] == ['dry', 'fast', 'coarse', 'fine'] and all(h for _, h in core.MODES)
+
+
+def test_summary_fast():
+    p = os.path.join(tempfile.mkdtemp(), 'AE1_fast_summary.txt')
+    write(p, 'AE1 fast run (17 s)\nboard: 2 copper layers\nfast (S11 only, no far field): confirm with coarse\n'
+             'resonance (min S11) -21.1 dB at 2408 MHz\nrun: converged in 7344 steps; mesh worst neighbour ratio 4.07\n')
+    lines = core.summary_lines(p)
+    assert lines[0].startswith('fast (S11 only') and lines[1].startswith('resonance') and len(lines) == 3
+
+
 def test_lock_refuses_live_pid():
     t = tempfile.mkdtemp()
     assert core.take_lock(t, os.getpid()) is None and core.take_lock(t, os.getpid()) is None   # ours: taken again

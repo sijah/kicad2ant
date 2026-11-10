@@ -1,6 +1,6 @@
 """kicad2ant: simulate a PCB antenna from a KiCad board in openEMS.
 
-  python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|coarse|fine] [--f0 MHz] [--band LO HI]
+  python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|fast|coarse|fine] [--f0 MHz] [--band LO HI]
                       [--feed PAD] [--gnd NET] [--out DIR] [--post] [--view]
 
 REF is the antenna footprint (default: the one AE*/ANT* or RF_Antenna footprint). Results go to
@@ -14,8 +14,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('board'); ap.add_argument('ref', nargs='?', default='auto')
-ap.add_argument('--mode', choices=('dry', 'coarse', 'fine'), default='coarse',
-                help='dry = model + geometry plot only; coarse = minutes; fine = for numbers you quote')
+ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fast',
+                help='dry: builds the model and draws it, no simulation; fast (default): rougher model, S11 / Zin / '
+                     'resonance / -10 dB band only, for each tuning step; coarse: also gain, efficiency and pattern, '
+                     'to confirm the variant you chose; fine: finer mesh, for the numbers you report')
 ap.add_argument('--f0', type=float, default=2440, help='design frequency, MHz (default 2440)')
 ap.add_argument('--band', type=float, nargs=2, metavar=('LO', 'HI'), help='target band, MHz (default 2400 2483.5 at 2.44 GHz, else f0 -/+ 2 %%)')
 ap.add_argument('--feed', help='feed pad (default 1)'); ap.add_argument('--gnd', help='ground net (default: net of pad 2, else GND or the largest ground-named zone net)')

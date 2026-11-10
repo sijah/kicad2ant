@@ -1,12 +1,24 @@
 """Helpers for the kicad2ant KiCad plugin, free of wx and pcbnew so they can be tested on their own."""
 import glob, hashlib, os, re, shutil, signal, subprocess, sys, time
 
-TARGET_DB = {'coarse': 40.0, 'fine': 50.0}   # openEMS end criterion 1e-4 / 1e-5 in antenna_sim.m
+TARGET_DB = {'fast': 30.0, 'coarse': 40.0, 'fine': 50.0}   # openEMS end criterion 1e-3 / 1e-4 / 1e-5 in antenna_sim.m
+MODES = [   # (mode, what it does), in the order the plugin lists them; the same words are in kicad2ant.py --help and the README
+    ('dry', 'Builds the model and draws it, no simulation. Do it first, to see the port and the ground.'),
+    ('fast', 'Rougher model: S11, Zin, resonance and the -10 dB band, no gain or pattern. For each tuning step.'),
+    ('coarse', 'Also directivity, efficiency, gain and pattern. To confirm the variant you chose.'),
+    ('fine', 'Finer mesh, runs to -50 dB. For the numbers you report.')]
+
+
+def mode_key(saved):
+    """The mode a saved setting means: 0.1.0 saved the list index (0 dry, 1 coarse, 2 fine), later versions the name."""
+    if type(saved) is int and 0 <= saved <= 2:
+        return ('dry', 'coarse', 'fine')[saved]
+    return saved if saved in dict(MODES) else 'fast'
 ENERGY = re.compile(r"Timestep:\s*(\d+).*?\(\s*-\s*([\d.]+)\s*dB\)")
 PHASES = (('antenna footprint:', 'Reading the board'), ('Create FDTD operator', 'Meshing'),
           ('Running FDTD engine', 'Simulating'), ('openEMS running', 'Simulating'),
           ('Time for ', 'Post-processing'), ('nf2ff', 'Post-processing'))
-SUMMARY = ('resonance', 'min S11', 'S11 < -10', 'no -10 dB band', 'at ', 'run:')
+SUMMARY = ('fast (', 'resonance','min S11', 'S11 < -10', 'no -10 dB band', 'at ', 'run:')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
