@@ -19,6 +19,9 @@
 - A saved plugin mode from 0.1.0 (a list index) keeps meaning the same mode.
 
 ### Fixed
+- Octave failed at start with "OpenBLAS error: Memory allocation still failed" on some machines
+  (one OpenBLAS thread per core). Octave now runs with `OPENBLAS_NUM_THREADS=1` unless you set it.
+- A footprint with the reference `ANT` or `AE` (no number) was not picked automatically.
 - The pattern plot was empty: the dB conversion floored the far field at 1e-9, above the actual
   field values (~1e-13), so every point came out at +63 dBi, off the plot. The floor is now 120 dB
   below the peak. The gain table and the `.vtk` were not affected.

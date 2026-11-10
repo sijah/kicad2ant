@@ -85,7 +85,9 @@ with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
             f"run(fullfile(run_dir, 'antenna_sim.m'))\n")
 script = f"run('{q(os.path.join(out, 'run_sim.m'))}')"
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display
-r = subprocess.run([octave(), '--no-gui', '--eval', script])
+# one OpenBLAS thread: one per core fails to allocate its buffers on many-core machines ("Memory allocation still
+# failed"), and Octave's share of the work is light (openEMS has its own threads)
+r = subprocess.run([octave(), '--no-gui', '--eval', script], env=dict(os.environ, OPENBLAS_NUM_THREADS=os.environ.get('OPENBLAS_NUM_THREADS', '1')))
 if a.view and r.returncode == 0:
     xml = os.path.join(out, 'sim_' + ('coarse' if a.mode == 'dry' else a.mode), 'antenna.xml')
     exe = next((p for p in (os.path.join(ems, 'AppCSXCAD.exe'), os.path.join(ems, 'bin', 'AppCSXCAD')) if ems and os.path.isfile(p)),
