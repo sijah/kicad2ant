@@ -255,18 +255,33 @@ fprintf(fid, '! %s openEMS %s: lumped port at the feed pad (%s), not de-embedded
 fprintf(fid, '%.0f %.6f %.6f\n', [freq; real(s11); imag(s11)]);
 fclose(fid);
 
-h = figure('visible', 'off');
-subplot(2,1,1); plot(freq/1e6, s11dB, 'k', 'LineWidth', 1.5); hold on;
-plot(freq([1 end])/1e6, [-10 -10], 'r--'); plot([band_t; band_t]/1e6, [-40 -40; 0 0], 'b:');
-if have_meas, plot(fm/1e6, 20*log10(abs(sm)), 'g', 'LineWidth', 1.2); end
-grid on; ylabel('|S11| (dB)'); title([name ' ' res ': S11' repmat(' (green = measured)', 1, have_meas)]);
-ylim([-40 0]); xlim(freq([1 end])/1e6);
-subplot(2,1,2); plot(freq/1e6, real(Zin), 'b', freq/1e6, imag(Zin), 'r--', 'LineWidth', 1.5);
-grid on; xlabel('MHz'); ylabel('Z_{in} (\Omega)'); legend('Re', 'Im', 'location', 'northwest'); xlim(freq([1 end])/1e6);
-print(h, fullfile(out, [name '_' res '_s11_zin.png']), '-dpng', '-r120');
+% S11 / Zin: f0 +/- 15 %, widened to the -10 dB band, within the sweep; target band shaded
+xr = [f0*0.85, f0*1.15];
+if s_min < -10, xr = [min(xr(1), freq(lo)), max(xr(2), freq(hi))]; end
+xr = [max(xr(1), freq(1)), min(xr(2), freq(end))] / 1e6;
+ylo = min(-40, 10*floor(s_min/10) - 5);
+h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 8]);   % 2000 x 1600 px at -r200: sharp when opened full size
+set(h, 'defaultaxesfontsize', 12, 'defaulttextfontsize', 12, 'defaultlinelinewidth', 2);
+subplot(2,1,1); hold on;
+patch(band_t([1 2 2 1])/1e6, [ylo ylo 0 0], [.85 .92 1], 'edgecolor', 'none');
+plot(xr, [-10 -10], 'r--', 'linewidth', 1);
+if s_min < -10, plot([freq(lo) freq(lo); freq(hi) freq(hi)]'/1e6, [ylo 0], 'r:', 'linewidth', 1); end
+plot(freq/1e6, s11dB, 'k');
+if have_meas, plot(fm/1e6, 20*log10(abs(sm)), 'color', [0 .6 0]); end
+if ~at_edge
+  plot(f_res/1e6, s_min, 'o', 'color', 'k', 'markerfacecolor', 'r', 'markersize', 8);
+  text(f_res/1e6, s_min, sprintf('  %.0f MHz, %.1f dB', f_res/1e6, s_min), 'verticalalignment', 'top');
+end
+grid on; box on; ylabel('|S11| (dB)'); ylim([ylo 0]); xlim(xr);
+title(sprintf('%s %s: S11 (blue = target band, red = -10 dB%s)', name, res, repmat(', green = measured', 1, have_meas)));
+subplot(2,1,2); plot(freq/1e6, real(Zin), 'b', freq/1e6, imag(Zin), 'r--'); hold on;
+k = freq >= xr(1)*1e6 & freq <= xr(2)*1e6; zr = [real(Zin(k)) imag(Zin(k))];
+grid on; box on; xlabel('MHz'); ylabel('Z_{in} (\Omega)'); xlim(xr); title('Z_{in}: blue = Re, red dashed = Im');
+ylim([min(-50, min(zr)), max(100, max(zr))] .* [1.1 1.1]);
+print(h, fullfile(out, [name '_' res '_s11_zin.png']), '-dpng', '-r200');
 
 % Smith chart of S11 (50 ohm): circle = f0, squares = target band edges
-h = figure('visible', 'off'); hold on; axis equal; axis off;
+h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 8 8]); hold on; axis equal; axis off;
 G = @(z) (z - 1) ./ (z + 1); gc = [.8 .8 .8];
 r = [0 logspace(-3, 4, 500)]; s = [-fliplr(r) r];
 for rr = [0 0.2 0.5 1 2 5], plot(real(G(rr + 1j*s)), imag(G(rr + 1j*s)), 'color', gc); end
@@ -278,14 +293,14 @@ plot(real(s11(i0)), imag(s11(i0)), 'ko', 'markerfacecolor', 'r');
 for bt = band_t, [~, k] = min(abs(freq - bt)); plot(real(s11(k)), imag(s11(k)), 'bs', 'markerfacecolor', 'b'); end
 title({sprintf('%s %s: S11 %.0f..%.0f MHz', name, res, freq(1)/1e6, freq(end)/1e6), ...
        sprintf('red = %.0f MHz, blue = target band edges%s', f0/1e6, repmat(', green = measured', 1, have_meas))});
-print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r120');
+print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r200');
 
 if fast, return; end
-h = figure('visible', 'off');
+h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 6]);
 plot(tc,dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB(cxy.E_norm{1}), 'k:', 'LineWidth', 1.5);
 grid on; xlim([-180 180]); ylim([-30 ceil(10*log10(D(ip))) + 2]);
 xlabel('angle (deg): \theta for xz / yz (negative = \phi+180 side), \phi for xy'); ylabel('directivity (dBi)');
 legend('xz (\phi = 0)', 'yz (\phi = 90)', 'xy (\theta = 90)', 'location', 'south');
 title(sprintf('%s %s: pattern cuts at %.0f MHz (x right, y up as in KiCad, z = top normal)', name, res, ffr(ip)/1e6));
-print(h, fullfile(out, [name '_' res '_pattern.png']), '-dpng', '-r120');
+print(h, fullfile(out, [name '_' res '_pattern.png']), '-dpng', '-r200');
 DumpFF2VTK(fullfile(out, [name '_' res '_pattern.vtk']), sph.E_norm{ip} / emax * D(ip), th, ph);

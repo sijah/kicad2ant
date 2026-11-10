@@ -83,6 +83,23 @@ def find_result(out, mode, since):
     return ('' if dry else p), os.path.basename(p)[:-len(suffix)]
 
 
+PICTURES = (('S11 / Zin', '_%s_s11_zin.png'), ('Smith', '_%s_smith.png'), ('Pattern', '_%s_pattern.png'),
+            ('Model', '_geometry.png'))
+
+
+def result_pictures(out, name, mode):
+    """[(label, path)] of the plots this run left in <out>/results, in the order the Results tab lists them."""
+    pics = PICTURES[-1:] if mode == 'dry' else PICTURES
+    paths = [(label, os.path.join(out, 'results', name + (s % mode if '%' in s else s))) for label, s in pics]
+    return [(label, p) for label, p in paths if os.path.isfile(p)]
+
+
+def fit(w, h, box_w, box_h):
+    """Picture size that fits the box with the aspect kept; never larger than the picture itself."""
+    k = min(box_w / w, box_h / h, 1.0)
+    return int(w * k), int(h * k)
+
+
 def summary_lines(path):
     """The lines of a kicad2ant summary a user needs: resonance, -10 dB band, impedance at f0, convergence."""
     try:

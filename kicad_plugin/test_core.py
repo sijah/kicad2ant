@@ -152,6 +152,21 @@ def test_lock_takes_stale():
     assert not os.path.exists(os.path.join(t, '.running'))
 
 
+def test_result_pictures():
+    t = tempfile.mkdtemp(); r = os.path.join(t, 'results'); os.makedirs(r)
+    for f in ('AE1_fast_s11_zin.png', 'AE1_fast_smith.png', 'AE1_geometry.png', 'AE1_coarse_pattern.png'):
+        write(os.path.join(r, f), 'x')
+    got = core.result_pictures(t, 'AE1', 'fast')
+    assert [l for l, _ in got] == ['S11 / Zin', 'Smith', 'Model'], got
+    assert got[0][1] == os.path.join(r, 'AE1_fast_s11_zin.png')
+    assert [l for l, _ in core.result_pictures(t, 'AE1', 'dry')] == ['Model']
+
+
+def test_fit():
+    assert core.fit(1200, 900, 600, 600) == (600, 450)
+    assert core.fit(400, 300, 600, 600) == (400, 300)   # never enlarged
+
+
 if __name__ == '__main__':
     for name, fn in sorted(globals().items()):
         if name.startswith('test_'):

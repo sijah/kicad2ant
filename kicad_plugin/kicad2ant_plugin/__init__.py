@@ -116,95 +116,103 @@ class Kicad2antDialog(wx.Dialog):
         self.stopped = False
         self.failed = False
         self.summary_text = ''
+        self.img = None   # the full-size wx.Image of the plot on the Results page
+        self.pics = []
 
-        self.mode_ctl = wx.Choice(self, choices=[m[0] for m in MODES])
+        self.book = wx.Notebook(self)
+        run = wx.Panel(self.book)
+        resp = wx.Panel(self.book)
+        self.book.AddPage(run, 'Run')
+        self.book.AddPage(resp, 'Results')
+
+        self.mode_ctl = wx.Choice(run, choices=[m[0] for m in MODES])
         self.mode_ctl.SetSelection([m for _, m in MODES].index(core.mode_key(s['mode'])))
         self.mode_ctl.SetToolTip('\n'.join('%s: %s' % (label.split(':')[0].split(' (')[0], HELP[m]) for label, m in MODES))
-        self.mode_help = wx.StaticText(self, label='')   # what the chosen mode does, in one line
+        self.mode_help = wx.StaticText(run, label='')   # what the chosen mode does, in one line
         self.mode_ctl.Bind(wx.EVT_CHOICE, lambda e: self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]]))
         self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]])
-        self.f0 = wx.TextCtrl(self, value=s['f0'], size=(70, -1))
-        self.lo = wx.TextCtrl(self, value=s['lo'], size=(70, -1))
-        self.hi = wx.TextCtrl(self, value=s['hi'], size=(70, -1))
+        self.f0 = wx.TextCtrl(run, value=s['f0'], size=(70, -1))
+        self.lo = wx.TextCtrl(run, value=s['lo'], size=(70, -1))
+        self.hi = wx.TextCtrl(run, value=s['hi'], size=(70, -1))
         for c in (self.lo, self.hi):
             c.SetToolTip('Target band in MHz. Leave empty: 2400 to 2483.5 at 2440 MHz, else f0 +/- 2 %.')
-        self.gnd = wx.TextCtrl(self, size=(90, -1))
+        self.gnd = wx.TextCtrl(run, size=(90, -1))
         self.gnd.SetToolTip('The ground net of this board. Leave empty: the net of the antenna\'s pad 2, else GND, '
                             'else the largest zone net with a ground name (AGND, GNDA, VSS ...).')
-        self.theme_ctl = wx.Choice(self, choices=THEMES)
+        self.theme_ctl = wx.Choice(run, choices=THEMES)
         self.theme_ctl.SetSelection(s['theme'] if s['theme'] in (0, 1, 2) else 0)
         self.theme_ctl.Bind(wx.EVT_CHOICE, lambda e: self.apply_theme())
         grid = wx.FlexGridSizer(0, 6, 6, 8)
         for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('Ground net', self.gnd),
                            ('Band from (MHz)', self.lo), ('to (MHz)', self.hi), ('Theme', self.theme_ctl)):
-            grid.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(wx.StaticText(run, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctl, 0, wx.ALIGN_CENTER_VERTICAL)
 
-        self.feed_txt = wx.StaticText(self, label=AUTO)
-        use_sel = wx.Button(self, label='Use selected pad')
+        self.feed_txt = wx.StaticText(run, label=AUTO)
+        use_sel = wx.Button(run, label='Use selected pad')
         use_sel.SetToolTip('Click the feed pad of the antenna in the PCB editor (this window stays open), then press this.')
         use_sel.Bind(wx.EVT_BUTTON, self.on_use_selected)
-        auto = wx.Button(self, label='Auto')
+        auto = wx.Button(run, label='Auto')
         auto.Bind(wx.EVT_BUTTON, lambda e: self.set_feed(None))
         feed_row = wx.BoxSizer(wx.HORIZONTAL)
-        feed_row.Add(wx.StaticText(self, label='Feed:'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        feed_row.Add(wx.StaticText(run, label='Feed:'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         feed_row.Add(self.feed_txt, 1, wx.ALIGN_CENTER_VERTICAL)
         feed_row.Add(use_sel, 0, wx.LEFT, 6)
         feed_row.Add(auto, 0, wx.LEFT, 4)
 
-        self.octave = wx.TextCtrl(self, value=s['octave'])
+        self.octave = wx.TextCtrl(run, value=s['octave'])
         self.octave.SetToolTip('Leave empty to find Octave by itself. Set it if the run says Octave was not found.')
-        browse = wx.Button(self, label='...', size=(30, -1))
+        browse = wx.Button(run, label='...', size=(30, -1))
         browse.Bind(wx.EVT_BUTTON, self.on_browse)
         oct_row = wx.BoxSizer(wx.HORIZONTAL)
-        oct_row.Add(wx.StaticText(self, label='Octave (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        oct_row.Add(wx.StaticText(run, label='Octave (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         oct_row.Add(self.octave, 1)
         oct_row.Add(browse, 0, wx.LEFT, 4)
 
-        self.openems = wx.TextCtrl(self, value=s['openems'])
+        self.openems = wx.TextCtrl(run, value=s['openems'])
         self.openems.SetToolTip('The openEMS folder, no spaces in the path: the one holding openEMS.exe and matlab on '
                                 'Windows, the install prefix (e.g. ~/opt/openEMS) on Linux and macOS. '
                                 'Leave empty to find openEMS by itself.')
-        browse_ems = wx.Button(self, label='...', size=(30, -1))
+        browse_ems = wx.Button(run, label='...', size=(30, -1))
         browse_ems.Bind(wx.EVT_BUTTON, self.on_browse_openems)
         ems_row = wx.BoxSizer(wx.HORIZONTAL)
-        ems_row.Add(wx.StaticText(self, label='openEMS folder (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        ems_row.Add(wx.StaticText(run, label='openEMS folder (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         ems_row.Add(self.openems, 1)
         ems_row.Add(browse_ems, 0, wx.LEFT, 4)
 
-        self.outdir = wx.TextCtrl(self, value=s['outdir'])
+        self.outdir = wx.TextCtrl(run, value=s['outdir'])
         self.outdir.SetToolTip('Where the run folder <board>_kicad2ant is made. Leave empty: next to the board file. '
                                'A place with a space in its path cannot be used (openEMS): a folder in your '
                                'local app data is used then.')
-        browse_out = wx.Button(self, label='...', size=(30, -1))
+        browse_out = wx.Button(run, label='...', size=(30, -1))
         browse_out.Bind(wx.EVT_BUTTON, self.on_browse_outdir)
         out_row = wx.BoxSizer(wx.HORIZONTAL)
-        out_row.Add(wx.StaticText(self, label='Output in (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        out_row.Add(wx.StaticText(run, label='Output in (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         out_row.Add(self.outdir, 1)
         out_row.Add(browse_out, 0, wx.LEFT, 4)
 
-        self.view = wx.CheckBox(self, label="Show the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
+        self.view = wx.CheckBox(run, label="Show the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
         self.view.SetValue(bool(s['view']))
         self.view.SetToolTip('The model exactly as openEMS gets it: copper, board, port and mesh lines. '
                              'With Check model it opens in seconds.')
 
-        note = wx.StaticText(self, label='Simulate fills the zones (like pressing B) and runs on a copy of the board as '
+        note = wx.StaticText(run, label='Simulate fills the zones (like pressing B) and runs on a copy of the board as '
                                          'it is on screen. Your board file is not changed.')
         note.Wrap(560)
 
-        self.run_btn = wx.Button(self, label='Simulate')
+        self.run_btn = wx.Button(run, label='Simulate')
         self.run_btn.Bind(wx.EVT_BUTTON, self.on_run)
-        self.stop_btn = wx.Button(self, label='Stop')
+        self.stop_btn = wx.Button(run, label='Stop')
         self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop)
         self.stop_btn.Disable()
-        self.folder_btn = wx.Button(self, label='Open results folder')
+        self.folder_btn = wx.Button(run, label='Open results folder')
         self.folder_btn.Bind(wx.EVT_BUTTON, lambda e: core.open_folder(os.path.join(self.out, 'results')))
         self.folder_btn.Disable()
-        self.run_dir_btn = wx.Button(self, label='Open run folder')
+        self.run_dir_btn = wx.Button(run, label='Open run folder')
         self.run_dir_btn.SetToolTip('The board copy, antenna_geom.m (the model Octave reads) and the sim_* folders.')
         self.run_dir_btn.Bind(wx.EVT_BUTTON, lambda e: core.open_folder(self.out))
         self.run_dir_btn.Disable()
-        close = wx.Button(self, wx.ID_CLOSE, 'Close')
+        close = wx.Button(run, wx.ID_CLOSE, 'Close')
         close.Bind(wx.EVT_BUTTON, lambda e: self.Close())
         buttons = wx.BoxSizer(wx.HORIZONTAL)
         for b in (self.run_btn, self.stop_btn, self.folder_btn, self.run_dir_btn):
@@ -212,25 +220,45 @@ class Kicad2antDialog(wx.Dialog):
         buttons.AddStretchSpacer()
         buttons.Add(close)
 
-        self.phase = wx.StaticText(self, label='')
-        self.gauge = wx.Gauge(self, range=1000, size=(-1, 18))
-        self.elapsed = wx.StaticText(self, label='')
-        self.summary = wx.StaticText(self, label='')
-        self.picture = wx.StaticBitmap(self)
-        self.log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 140))   # wraps: long lines stay readable
+        self.phase = wx.StaticText(run, label='')
+        self.gauge = wx.Gauge(run, range=1000, size=(-1, 18))
+        self.elapsed = wx.StaticText(run, label='')
+        self.summary = wx.StaticText(resp, label='')
+        self.plot_ctl = wx.Choice(resp)
+        self.plot_ctl.Bind(wx.EVT_CHOICE, lambda e: self.show_picture())
+        self.picture = wx.Panel(resp)   # draws the plot scaled to its own size on every paint
+        self.picture.SetMinSize((300, 200))
+        self.picture.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.picture.SetToolTip('Click to open the picture full size.')
+        self.picture.Bind(wx.EVT_LEFT_DOWN, lambda e: self.img and core.open_folder(self.pics[self.plot_ctl.GetSelection()][1]))
+        self.picture.Bind(wx.EVT_PAINT, self.on_paint_picture)
+        self.picture.Bind(wx.EVT_SIZE, lambda e: (self.picture.Refresh(), e.Skip()))
+        self.scaled = None   # (size, wx.Bitmap) of the last drawing
+        self.log = wx.TextCtrl(run, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 140))   # wraps: long lines stay readable
         self.log.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        self.copy_btn = wx.Button(self, label='Copy log')
+        self.copy_btn = wx.Button(run, label='Copy log')
         self.copy_btn.SetToolTip('Puts the whole log on the clipboard, e.g. to paste into an issue.')
         self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_log)
-        self.clear_btn = wx.Button(self, label='Clear log')
+        self.clear_btn = wx.Button(run, label='Clear log')
         self.clear_btn.Bind(wx.EVT_BUTTON, lambda e: self.log.Clear())
         log_row = wx.BoxSizer(wx.HORIZONTAL)
-        log_row.Add(wx.StaticText(self, label='Log'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        log_row.Add(wx.StaticText(run, label='Log'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         log_row.Add(self.copy_btn, 0, wx.RIGHT, 6)
         log_row.Add(self.clear_btn)
 
+        plot_row = wx.BoxSizer(wx.HORIZONTAL)
+        plot_row.Add(wx.StaticText(resp, label='Plot'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        plot_row.Add(self.plot_ctl)
+        res_box = wx.BoxSizer(wx.VERTICAL)
+        res_box.Add(self.summary, 0, wx.ALL, 10)
+        res_box.Add(plot_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        res_box.Add(self.picture, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        resp.SetSizer(res_box)
+
+        top = wx.BoxSizer(wx.VERTICAL)
+        top.Add(header, 0, wx.ALL, 10)
+        top.Add(self.book, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         root = wx.BoxSizer(wx.VERTICAL)
-        root.Add(header, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         root.Add(grid, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         root.Add(self.mode_help, 0, wx.ALL, 10)
         root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
@@ -243,11 +271,10 @@ class Kicad2antDialog(wx.Dialog):
         root.Add(self.phase, 0, wx.LEFT | wx.RIGHT, 10)
         root.Add(self.gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
         root.Add(self.elapsed, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(self.summary, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(self.picture, 0, wx.ALIGN_CENTER | wx.LEFT | wx.RIGHT, 10)
         root.Add(log_row, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         root.Add(self.log, 1, wx.EXPAND | wx.ALL, 10)
-        self.SetSizer(root)
+        run.SetSizer(root)
+        self.SetSizer(top)
         self.SetMinSize((600, -1))
         self.Fit()
         if s['size']:
@@ -275,9 +302,14 @@ class Kicad2antDialog(wx.Dialog):
         theme = self.theme_ctl.GetSelection()
         bg, fg, field = (wx.Colour(*c) for c in COLOURS[theme]) if theme else (wx.NullColour,) * 3
         dark = theme == 2 or (theme == 0 and wx.SystemSettings.GetAppearance().IsDark())
-        for w in [self] + list(self.GetChildren()):
+        def walk(w):   # the pages' controls are grandchildren of the window
+            yield w
+            for c in w.GetChildren():
+                yield from walk(c)
+        for w in walk(self):
             w.SetBackgroundColour(field if isinstance(w, (wx.TextCtrl, wx.Choice, wx.Button)) else bg)
             w.SetForegroundColour(fg)
+            w.Refresh()   # on Windows a page's labels keep their old colours until repainted
         if self.failed:
             self.summary.SetForegroundColour(wx.Colour(240, 90, 90) if dark else wx.Colour(170, 20, 20))
         self.Refresh()
@@ -393,7 +425,7 @@ class Kicad2antDialog(wx.Dialog):
         self.log.Clear()
         self.add_log(' '.join(cmd))
         self.set_summary('')
-        self.picture.SetBitmap(wx.NullBitmap)
+        self.set_pictures([])
         self.gauge.SetValue(0)
         self.phase.SetLabel('Starting')
         kw = {'creationflags': core.NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}
@@ -480,6 +512,7 @@ class Kicad2antDialog(wx.Dialog):
             self.gauge.SetValue(1000)
             self.phase.SetLabel('Done')
             self.show_result(self.mode, res, '')
+            self.book.SetSelection(1)   # the Results page
         else:
             self.phase.SetLabel('Stopped' if self.stopped else 'Failed')
             self.set_summary('Stopped.' if self.stopped else
@@ -495,15 +528,43 @@ class Kicad2antDialog(wx.Dialog):
         if core.band_covered(lines):
             lines.append(GOOD)
         self.set_summary('\n'.join(([title] if title else []) + lines))
-        pic = os.path.join(self.out, 'results', name + ('_geometry.png' if mode == 'dry' else '_%s_s11_zin.png' % mode))
-        if os.path.isfile(pic):
-            img = wx.Image(pic)
-            if img.IsOk() and img.GetWidth() > 560:
-                img.Rescale(560, int(img.GetHeight() * 560 / img.GetWidth()), wx.IMAGE_QUALITY_HIGH)
-            self.picture.SetBitmap(wx.Bitmap(img))
+        self.set_pictures(core.result_pictures(self.out, name, mode))
         self.folder_btn.Enable()
         self.run_dir_btn.Enable()
         self.grow()
+
+    def set_pictures(self, pics):
+        self.pics = pics
+        self.plot_ctl.Set([label for label, _ in pics])
+        if pics:
+            self.plot_ctl.SetSelection(0)
+        self.show_picture()
+
+    def show_picture(self):
+        i = self.plot_ctl.GetSelection()
+        self.img = wx.Image(self.pics[i][1]) if self.pics and i >= 0 else None
+        if self.img is not None and not self.img.IsOk():
+            self.img = None
+        self.scaled = None
+        self.picture.Refresh()
+
+    def picture_bitmap(self):
+        """The plot scaled to fit the picture panel (cached per panel size), or None."""
+        if self.img is None:
+            return None
+        size = tuple(self.picture.GetClientSize())
+        if self.scaled is None or self.scaled[0] != size:
+            w, h = core.fit(self.img.GetWidth(), self.img.GetHeight(), max(size[0], 1), max(size[1], 1))
+            self.scaled = size, wx.Bitmap(self.img.Scale(max(w, 1), max(h, 1), wx.IMAGE_QUALITY_HIGH))
+        return self.scaled[1]
+
+    def on_paint_picture(self, _):
+        dc = wx.AutoBufferedPaintDC(self.picture)
+        dc.SetBackground(wx.Brush(self.picture.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        bmp = self.picture_bitmap()
+        if bmp is not None:
+            dc.DrawBitmap(bmp, 0, 0)
 
     # ------------------------------------------------------------------ stop and close
 
