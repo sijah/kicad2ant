@@ -105,6 +105,14 @@ def test_find_python():
 def test_pid_alive():
     assert core.pid_alive(os.getpid())
     assert not core.pid_alive(4999999) and not core.pid_alive(0)
+    if os.name == 'nt':   # a reused pid of another program is not our simulation
+        assert core.pid_alive(os.getpid(), 'python') and not core.pid_alive(os.getpid(), 'notepad')
+
+
+def test_failure_line():
+    assert core.failure_line(['error: openEMS not found, set OPENEMS', '', 'failed (see above)']) == \
+        'error: openEMS not found, set OPENEMS'
+    assert core.failure_line(['', 'failed (see above)']) == ''
 
 
 if __name__ == '__main__':

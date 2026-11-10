@@ -90,6 +90,11 @@ def summary_lines(path):
     return keep
 
 
+def failure_line(lines):
+    """The last line of a failed run that says what went wrong (not kicad2ant's 'failed (see above)')."""
+    return next((l.strip() for l in reversed(lines) if l.strip() and l.strip() != 'failed (see above)'), '')
+
+
 def band_covered(lines):
     """Whether the summary says the -10 dB band covers the target band."""
     return any(l.startswith('S11 < -10') and ' covers the ' in l for l in lines)
@@ -126,14 +131,16 @@ def kill_tree(proc):
         pass
 
 
-def pid_alive(pid):
-    """Whether a process is running. Not os.kill(pid, 0): on Windows that terminates it."""
+def pid_alive(pid, name=''):
+    """Whether a process is running (on Windows: and its program name starts with `name`, since pids are
+    reused). Not os.kill(pid, 0): on Windows that terminates it."""
     if pid <= 0:
         return False
     if os.name == 'nt':
         out = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH', '/FO', 'CSV'], capture_output=True,
                              text=True, creationflags=NO_WINDOW).stdout
-        return '"%d"' % pid in out
+        return '"%d"' % pid in out and out.strip().lower().startswith('"' + name.lower())
+    # shortcut: no name check on POSIX, pid reuse there is rare; read /proc/<pid>/comm if it bites
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

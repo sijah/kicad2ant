@@ -24,7 +24,6 @@ NOT_ANTENNA = ('Pick a pad on the antenna. Matching parts are not simulated: '
                'design the match from the .s1p in the results folder.')
 TITLE = 'kicad2ant'
 _dialog = None
-_frame_bound = False
 
 
 def script_path():
@@ -94,7 +93,6 @@ class Kicad2antDialog(wx.Dialog):
         self.log_pos = 0
         self.log_rest = ''
         self.best = 0.0
-        self.last_line = ''
         self.stopped = False
 
         self.mode_ctl = wx.Choice(self, choices=[m[0] for m in MODES])
@@ -180,6 +178,7 @@ class Kicad2antDialog(wx.Dialog):
         self.timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
         self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_WINDOW_DESTROY, self.on_destroy)
         self.show_previous()
 
     # ------------------------------------------------------------------ feed and settings
@@ -242,7 +241,7 @@ class Kicad2antDialog(wx.Dialog):
         lock = os.path.join(out, '.running')
         try:
             with open(lock) as f:
-                if core.pid_alive(int(f.read().strip() or 0)):
+                if core.pid_alive(int(f.read().strip() or 0), 'python'):
                     wx.MessageBox('Another simulation is using this board folder:\n' + out, TITLE)
                     return
         except (OSError, ValueError):
@@ -261,7 +260,7 @@ class Kicad2antDialog(wx.Dialog):
         ref, num = self.feed if self.feed else ('auto', '')
         cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi))
         self.out, self.mode, self.started = out, mode, time.time()
-        self.log_pos, self.log_rest, self.best, self.last_line, self.stopped = 0, '', 0.0, '', False
+        self.log_pos, self.log_rest, self.best, self.stopped = 0, '', 0.0, False
         self.log.Clear()
         self.add_log(' '.join(cmd))
         self.summary.SetLabel('')
@@ -283,19 +282,22 @@ class Kicad2antDialog(wx.Dialog):
         self.run_btn.Disable()
         self.stop_btn.Enable()
         self.timer.Start(1000)
-        threading.Thread(target=self.reader, args=(self.proc,), daemon=True).start()
+        threading.Thread(target=self.reader, args=(self.proc, lock), daemon=True).start()
 
-    def reader(self, proc):
+    def reader(self, proc, lock):
         for line in proc.stdout:
             wx.CallAfter(self.add_log, line.rstrip())
-        wx.CallAfter(self.finished, proc.wait())
+        code = proc.wait()
+        try:   # here, not in finished(): the dialog may be gone by now
+            os.remove(lock)
+        except OSError:
+            pass
+        wx.CallAfter(self.finished, code)
 
     def add_log(self, line):
         if not self:   # the dialog is gone
             return
         self.log.AppendText(line + '\n')
-        if line.strip():
-            self.last_line = line.strip()
         ph = core.phase(line)
         if ph:
             self.phase.SetLabel(ph)
@@ -336,10 +338,6 @@ class Kicad2antDialog(wx.Dialog):
             return
         self.timer.Stop()
         self.proc = None
-        try:
-            os.remove(os.path.join(self.out, '.running'))
-        except OSError:
-            pass
         self.run_btn.Enable()
         self.stop_btn.Disable()
         res = core.find_result(self.out, self.mode, self.started)
@@ -350,7 +348,8 @@ class Kicad2antDialog(wx.Dialog):
         else:
             self.phase.SetLabel('Stopped' if self.stopped else 'Failed')
             self.summary.SetForegroundColour(wx.Colour(170, 20, 20))
-            self.summary.SetLabel('Stopped.' if self.stopped else (self.last_line or 'Failed: see the log below.'))
+            self.summary.SetLabel('Stopped.' if self.stopped else
+                                  (core.failure_line(self.log.GetValue().splitlines()) or 'Failed: see the log below.'))
             self.summary.Wrap(560)
         self.folder_btn.Enable(os.path.isdir(os.path.join(self.out, 'results')))
         self.Layout()
@@ -378,39 +377,24 @@ class Kicad2antDialog(wx.Dialog):
     # ------------------------------------------------------------------ stop and close
 
     def stop_run(self):
-        proc = self.proc
-        if proc is None:
-            return
-        self.stopped = True
-        core.kill_tree(proc)
-        log = os.path.join(self.out, 'sim_' + ('coarse' if self.mode == 'dry' else self.mode), 'openEMS.log')
-        if os.path.isfile(log):
-            try:
-                open(log, 'a').close()
-            except OSError:   # openEMS still holds it
-                wx.MessageBox('openEMS is still running: end it in Task Manager.', TITLE, wx.ICON_WARNING)
+        if self.proc is not None:
+            self.stopped = True
+            core.kill_tree(self.proc)
 
     def on_stop(self, _):
         self.stop_run()
 
     def on_close(self, _):
-        self.timer.Stop()
-        self.stop_run()
         self.Destroy()
 
-
-def _frame_closing(event):
-    """KiCad's PCB editor is closing: do not leave openEMS running."""
-    if _dialog:
-        _dialog.stop_run()
-    event.Skip()
-
-
-def _forget_dialog(event):
-    global _dialog
-    if event.GetEventObject() is _dialog:
-        _dialog = None
-    event.Skip()
+    def on_destroy(self, event):
+        """Also runs when KiCad destroys the dialog with the PCB editor (no EVT_CLOSE then): end the run."""
+        global _dialog
+        if event.GetEventObject() is self:
+            self.timer.Stop()
+            self.stop_run()
+            _dialog = None
+        event.Skip()
 
 
 class Kicad2antPlugin(pcbnew.ActionPlugin):
@@ -423,19 +407,14 @@ class Kicad2antPlugin(pcbnew.ActionPlugin):
         self.dark_icon_file_name = self.icon_file_name
 
     def Run(self):
-        global _dialog, _frame_bound
+        global _dialog
         if not pcbnew.GetBoard().GetFileName():
             wx.MessageBox('Save the board once first.', TITLE)
             return
         if _dialog:
             _dialog.Raise()
             return
-        frame = wx.FindWindowByName('PcbFrame')
-        if frame is not None and not _frame_bound:
-            frame.Bind(wx.EVT_CLOSE, _frame_closing)
-            _frame_bound = True
-        _dialog = Kicad2antDialog(frame)
-        _dialog.Bind(wx.EVT_WINDOW_DESTROY, _forget_dialog)
+        _dialog = Kicad2antDialog(wx.FindWindowByName('PcbFrame'))
         _dialog.Show()   # not modal: the feed pad can be clicked in the editor meanwhile
 
 
