@@ -27,23 +27,23 @@ def is_antenna_ref(ref, lib_name):
     return bool(re.match(r'(AE|ANT)', ref, re.I)) or 'antenna' in lib_name.lower()
 
 
-def run_dir(board_path, env=os.environ):
-    """Run folder: next to the board, or a space-free fallback (openEMS nf2ff cannot use a path with spaces)."""
+def run_dir(board_path, env=os.environ, base=''):
+    """Run folder: BOARD_kicad2ant next to the board (or in `base`, the folder the user chose), or a space-free fallback (openEMS nf2ff cannot use a path with spaces)."""
     if not board_path:
         raise ValueError('save the board once first')
     stem = os.path.splitext(os.path.basename(board_path))[0]
-    here = os.path.join(os.path.dirname(board_path), stem + '_kicad2ant')
+    here = os.path.join(base or os.path.dirname(board_path), stem + '_kicad2ant')
     if ' ' not in here:
         return here
     # the home folder before the temp folder: results there survive a reboot
-    for base in (env.get('LOCALAPPDATA'), env.get('USERPROFILE') or env.get('HOME'), 'C:\\' if os.name == 'nt' else '/tmp'):
-        if base and ' ' not in base:
+    for home in (env.get('LOCALAPPDATA'), env.get('USERPROFILE') or env.get('HOME'), 'C:\\' if os.name == 'nt' else '/tmp'):
+        if home and ' ' not in home:
             break
     tag = hashlib.md5(board_path.encode('utf-8')).hexdigest()[:6]
-    return os.path.join(base, 'kicad2ant', stem.replace(' ', '_') + '_' + tag)
+    return os.path.join(home, 'kicad2ant', stem.replace(' ', '_') + '_' + tag)
 
 
-def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd=''):
+def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd='', view=False):
     cmd = [python, script, board_copy, ref or 'auto', '--mode', mode, '--out', out]
     if feed:
         cmd += ['--feed', feed]
@@ -53,6 +53,8 @@ def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='',
         cmd += ['--band', band[0], band[1]]
     if gnd:
         cmd += ['--gnd', gnd]
+    if view:
+        cmd.append('--view')
     return cmd
 
 

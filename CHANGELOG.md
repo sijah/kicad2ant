@@ -9,6 +9,9 @@ First public version. KiCad 10 (SWIG action plugin), status: testing.
   (*Use selected pad*), Octave path, openEMS folder; progress from the openEMS log; **Stop**;
   **Open results folder** and **Open run folder**. It fills the zones and runs on a copy of the
   board, so the board file is not changed.
+- Plugin window: **Output in** (where the run folder is made), **Show the 3D model** in openEMS's
+  viewer (`--view` on the command line), **Theme** (System / Light / Dark); the window can be
+  resized and maximized and remembers its size; the log wraps long lines.
 - **Command line** `scripts/kicad2ant.py` and the Claude Code skill.
 - Ground net found by name when the antenna has no pad 2 and no net is called `GND`
   (`AGND`, `GNDA`, `VSS`, `0V`, ... also inside a sheet path).

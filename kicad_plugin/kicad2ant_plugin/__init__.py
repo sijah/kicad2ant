@@ -16,10 +16,12 @@ except ImportError:   # loaded as a plain module (development)
 
 PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
-DEFAULTS = {'mode': 1, 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': ''}
+DEFAULTS = {'mode': 1, 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False}
 MODES = [('Check model (seconds)', 'dry'), ('Coarse (minutes)', 'coarse'), ('Fine (much longer)', 'fine')]
 AUTO = 'Auto: the AE* / ANT* / antenna footprint, pad 1'
 GOOD = 'Good: the -10 dB band covers your target band.'
+THEMES = ['System', 'Light', 'Dark']
+COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
 _dialog = None
@@ -84,7 +86,7 @@ def child_env(python, octave, openems=''):
 
 class Kicad2antDialog(wx.Dialog):
     def __init__(self, parent):
-        super().__init__(parent, title=TITLE + ': antenna simulation', style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        super().__init__(parent, title=TITLE + ': antenna simulation', style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX)
         s = load_settings()
         self.proc = None
         self.out = ''
@@ -95,6 +97,8 @@ class Kicad2antDialog(wx.Dialog):
         self.log_rest = ''
         self.best = 0.0
         self.stopped = False
+        self.failed = False
+        self.summary_text = ''
 
         self.mode_ctl = wx.Choice(self, choices=[m[0] for m in MODES])
         self.mode_ctl.SetSelection(s['mode'] if s['mode'] in (0, 1, 2) else 1)
@@ -108,9 +112,12 @@ class Kicad2antDialog(wx.Dialog):
         self.gnd = wx.TextCtrl(self, size=(90, -1))
         self.gnd.SetToolTip('The ground net of this board. Leave empty: the net of the antenna\'s pad 2, else GND, '
                             'else the largest zone net with a ground name (AGND, GNDA, VSS ...).')
+        self.theme_ctl = wx.Choice(self, choices=THEMES)
+        self.theme_ctl.SetSelection(s['theme'] if s['theme'] in (0, 1, 2) else 0)
+        self.theme_ctl.Bind(wx.EVT_CHOICE, lambda e: self.apply_theme())
         grid = wx.FlexGridSizer(0, 6, 6, 8)
         for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('Ground net', self.gnd),
-                           ('Band from (MHz)', self.lo), ('to (MHz)', self.hi), ('', wx.StaticText(self))):
+                           ('Band from (MHz)', self.lo), ('to (MHz)', self.hi), ('Theme', self.theme_ctl)):
             grid.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctl, 0, wx.ALIGN_CENTER_VERTICAL)
 
@@ -146,6 +153,22 @@ class Kicad2antDialog(wx.Dialog):
         ems_row.Add(self.openems, 1)
         ems_row.Add(browse_ems, 0, wx.LEFT, 4)
 
+        self.outdir = wx.TextCtrl(self, value=s['outdir'])
+        self.outdir.SetToolTip('Where the run folder <board>_kicad2ant is made. Leave empty: next to the board file. '
+                               'A place with a space in its path cannot be used (openEMS): a folder in your '
+                               'local app data is used then.')
+        browse_out = wx.Button(self, label='...', size=(30, -1))
+        browse_out.Bind(wx.EVT_BUTTON, self.on_browse_outdir)
+        out_row = wx.BoxSizer(wx.HORIZONTAL)
+        out_row.Add(wx.StaticText(self, label='Output in (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        out_row.Add(self.outdir, 1)
+        out_row.Add(browse_out, 0, wx.LEFT, 4)
+
+        self.view = wx.CheckBox(self, label="Show the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
+        self.view.SetValue(bool(s['view']))
+        self.view.SetToolTip('The model exactly as openEMS gets it: copper, board, port and mesh lines. '
+                             'With Check model it opens in seconds.')
+
         note = wx.StaticText(self, label='Simulate fills the zones (like pressing B) and runs on a copy of the board as '
                                          'it is on screen. Your board file is not changed.')
         note.Wrap(560)
@@ -175,7 +198,7 @@ class Kicad2antDialog(wx.Dialog):
         self.elapsed = wx.StaticText(self, label='')
         self.summary = wx.StaticText(self, label='')
         self.picture = wx.StaticBitmap(self)
-        self.log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP, size=(-1, 90))
+        self.log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 140))   # wraps: long lines stay readable
         self.log.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
 
         root = wx.BoxSizer(wx.VERTICAL)
@@ -183,6 +206,8 @@ class Kicad2antDialog(wx.Dialog):
         root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(oct_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(ems_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(out_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(self.view, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(note, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(self.phase, 0, wx.LEFT | wx.RIGHT, 10)
@@ -194,14 +219,58 @@ class Kicad2antDialog(wx.Dialog):
         self.SetSizer(root)
         self.SetMinSize((600, -1))
         self.Fit()
+        if s['size']:
+            self.SetSize(s['size'])
+        self.apply_theme()
 
         self.timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
         self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_SIZE, self.on_size)
         self.Bind(wx.EVT_WINDOW_DESTROY, self.on_destroy)
         self.show_previous()
 
     # ------------------------------------------------------------------ feed and settings
+
+    def settings(self):
+        return {'mode': self.mode_ctl.GetSelection(), 'f0': self.f0.GetValue().strip(), 'lo': self.lo.GetValue().strip(),
+                'hi': self.hi.GetValue().strip(), 'octave': self.octave.GetValue().strip(),
+                'openems': self.openems.GetValue().strip(), 'theme': self.theme_ctl.GetSelection(),
+                'outdir': self.outdir.GetValue().strip(), 'view': self.view.GetValue(),
+                'size': None if self.IsMaximized() else list(self.GetSize())}
+
+    def apply_theme(self):
+        """System leaves every colour to KiCad / the OS; Light and Dark set them on the window and its controls."""
+        theme = self.theme_ctl.GetSelection()
+        bg, fg, field = (wx.Colour(*c) for c in COLOURS[theme]) if theme else (wx.NullColour,) * 3
+        dark = theme == 2 or (theme == 0 and wx.SystemSettings.GetAppearance().IsDark())
+        for w in [self] + list(self.GetChildren()):
+            w.SetBackgroundColour(field if isinstance(w, (wx.TextCtrl, wx.Choice, wx.Button)) else bg)
+            w.SetForegroundColour(fg)
+        if self.failed:
+            self.summary.SetForegroundColour(wx.Colour(240, 90, 90) if dark else wx.Colour(170, 20, 20))
+        self.Refresh()
+
+    def set_summary(self, text, failed=False):
+        self.summary_text, self.failed = text, failed
+        self.apply_theme()
+        self.wrap_summary()
+
+    def wrap_summary(self):   # Wrap() puts line breaks into the label, so start again from the text
+        self.summary.SetLabel(self.summary_text)
+        self.summary.Wrap(-1)   # wx 3.3 skips a Wrap() to the width it already has, even after a new label
+        self.summary.Wrap(max(560, self.GetClientSize().width - 20))
+
+    def on_size(self, event):
+        self.wrap_summary()
+        event.Skip()
+
+    def grow(self):
+        """Makes room for a result; never shrinks the size the user gave the window."""
+        self.Layout()
+        (w, h), (bw, bh) = self.GetSize(), self.GetBestSize()
+        if not self.IsMaximized():
+            self.SetSize(max(w, bw), max(h, bh))
 
     def set_feed(self, feed, named=True):
         self.feed = feed
@@ -226,10 +295,18 @@ class Kicad2antDialog(wx.Dialog):
             if d.ShowModal() == wx.ID_OK:
                 self.openems.SetValue(d.GetPath())
 
+    def on_browse_outdir(self, _):
+        with wx.DirDialog(self, 'Folder to make the run folder in') as d:
+            if d.ShowModal() == wx.ID_OK:
+                self.outdir.SetValue(d.GetPath())
+
+    def run_folder(self):
+        return core.run_dir(pcbnew.GetBoard().GetFileName(), base=self.outdir.GetValue().strip())
+
     def show_previous(self):
         """Shows the newest earlier result of this board for the chosen mode."""
         try:
-            out = core.run_dir(pcbnew.GetBoard().GetFileName())
+            out = self.run_folder()
         except ValueError:
             return
         mode = MODES[self.mode_ctl.GetSelection()][1]
@@ -257,7 +334,7 @@ class Kicad2antDialog(wx.Dialog):
             return
         board = pcbnew.GetBoard()
         try:
-            out = core.run_dir(board.GetFileName())
+            out = self.run_folder()
         except ValueError:
             wx.MessageBox('Save the board once first.', TITLE)
             return
@@ -270,8 +347,7 @@ class Kicad2antDialog(wx.Dialog):
                     return
         except (OSError, ValueError):
             pass
-        save_settings({'mode': self.mode_ctl.GetSelection(), 'f0': f0, 'lo': lo, 'hi': hi,
-                       'octave': self.octave.GetValue().strip(), 'openems': self.openems.GetValue().strip()})
+        save_settings(self.settings())
 
         self.phase.SetLabel('Filling zones and saving a copy of the board')
         wx.SafeYield()
@@ -284,13 +360,13 @@ class Kicad2antDialog(wx.Dialog):
         if self.feed and self.feed_board != board.GetFileName():   # another board was opened under this window
             self.set_feed(None)
         ref, num = self.feed if self.feed else ('auto', '')
-        cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip())
+        cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip(),
+                             self.view.GetValue())
         self.out, self.mode, self.started = out, mode, time.time()
         self.log_pos, self.log_rest, self.best, self.stopped = 0, '', 0.0, False
         self.log.Clear()
         self.add_log(' '.join(cmd))
-        self.summary.SetLabel('')
-        self.summary.SetForegroundColour(wx.NullColour)
+        self.set_summary('')
         self.picture.SetBitmap(wx.NullBitmap)
         self.gauge.SetValue(0)
         self.phase.SetLabel('Starting')
@@ -375,14 +451,11 @@ class Kicad2antDialog(wx.Dialog):
             self.show_result(self.mode, res, '')
         else:
             self.phase.SetLabel('Stopped' if self.stopped else 'Failed')
-            self.summary.SetForegroundColour(wx.Colour(170, 20, 20))
-            self.summary.SetLabel('Stopped.' if self.stopped else
-                                  (core.failure_line(self.log.GetValue().splitlines()) or 'Failed: see the log below.'))
-            self.summary.Wrap(560)
+            self.set_summary('Stopped.' if self.stopped else
+                             (core.failure_line(self.log.GetValue().splitlines()) or 'Failed: see the log below.'), True)
         self.folder_btn.Enable(os.path.isdir(os.path.join(self.out, 'results')))
         self.run_dir_btn.Enable(os.path.isdir(self.out))
-        self.Layout()
-        self.Fit()
+        self.grow()
 
     def show_result(self, mode, res, title):
         summary, name = res
@@ -390,9 +463,7 @@ class Kicad2antDialog(wx.Dialog):
                                                              'antenna orange, port magenta on the feed pad).']
         if core.band_covered(lines):
             lines.append(GOOD)
-        self.summary.SetForegroundColour(wx.NullColour)
-        self.summary.SetLabel('\n'.join(([title] if title else []) + lines))
-        self.summary.Wrap(560)
+        self.set_summary('\n'.join(([title] if title else []) + lines))
         pic = os.path.join(self.out, 'results', name + ('_geometry.png' if mode == 'dry' else '_%s_s11_zin.png' % mode))
         if os.path.isfile(pic):
             img = wx.Image(pic)
@@ -401,8 +472,7 @@ class Kicad2antDialog(wx.Dialog):
             self.picture.SetBitmap(wx.Bitmap(img))
         self.folder_btn.Enable()
         self.run_dir_btn.Enable()
-        self.Layout()
-        self.Fit()
+        self.grow()
 
     # ------------------------------------------------------------------ stop and close
 
@@ -415,6 +485,7 @@ class Kicad2antDialog(wx.Dialog):
         self.stop_run()
 
     def on_close(self, _):
+        save_settings(self.settings())   # keeps the theme and the window size
         self.Destroy()
 
     def on_destroy(self, event):

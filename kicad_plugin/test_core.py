@@ -40,6 +40,7 @@ def test_antenna_ref_rule():
 
 def test_run_dir():
     assert core.run_dir("D:/x/ifa.kicad_pcb", {}).replace('\\', '/') == "D:/x/ifa_kicad2ant"
+    assert core.run_dir("D:/x/ifa.kicad_pcb", {}, "E:/sim").replace('\\', '/') == "E:/sim/ifa_kicad2ant"   # the chosen place
     try:
         core.run_dir('', {}); assert False
     except ValueError:

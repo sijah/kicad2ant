@@ -226,7 +226,8 @@ else:
         named = [n for n in zarea if re.match(r'((A|D|P|RF)?GND\w*|VSS\w*|0V)$', leaf(n), re.I)]
         gnd = max(named, key=zarea.get, default=None)
         if gnd: print(f'ground net: {gnd} (the largest zone net with a ground name; give --gnd for another)')
-assert gnd, f'cannot tell the ground net (nets with zones: {", ".join(sorted(zarea)) or "none"}): give it with --gnd NET, in the plugin as Ground net'
+assert zarea or a.gnd, 'the board has no copper zones: the antenna needs a ground. Draw a zone on the ground net, press B, save'
+assert gnd, f'cannot tell the ground net (nets with zones: {", ".join(sorted(zarea))}): give it with --gnd NET, in the plugin as Ground net'
 fills, unfilled = list(zfill.get(gnd, [])), zempty.get(gnd, 0)
 assert fills, f'no filled {gnd} zones on the board' + (' (they exist but are not filled: press B in KiCad, then save)' if unfilled else '')
 if unfilled: warn(f'{unfilled} {gnd} zones have no fill (press B in KiCad and save if that is not intended)')

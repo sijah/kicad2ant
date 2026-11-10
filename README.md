@@ -111,6 +111,9 @@ The window's fields:
 | **Feed** | *Use selected pad*: click the antenna's feed pad in the editor, then this button. *Auto* goes back | the one antenna footprint, pad 1 |
 | **Octave** | path to `octave-gui.exe` or `octave` | found by itself |
 | **openEMS folder** | where openEMS is | found by itself |
+| **Output in** | the folder the run folder `<board>_kicad2ant` is made in | next to the board file |
+| **Show the 3D model…** | opens the model in openEMS's own viewer (AppCSXCAD) when the run ends: copper, board, port and mesh lines. With *Check model* that is seconds | off |
+| **Theme** | System, Light or Dark colours for this window | System |
 
 While it runs you see the phase, a progress bar read from openEMS's own log, and the elapsed time. **Stop** ends
 the run and everything it started. When it is done the window shows the result lines and the S11 plot;
@@ -121,7 +124,7 @@ Two things to know:
 
 - **Your board file is not changed.** Simulate fills the zones (like pressing **B**) and saves a *copy* of the
   board as it is on screen into the run folder. The simulation runs on that copy.
-- **The run folder** is `<board>_kicad2ant/` next to the board. openEMS can't work in a path with spaces, so for
+- **The run folder** is `<board>_kicad2ant/` next to the board, or in the folder you give in **Output in**. openEMS can't work in a path with spaces, so for
   a board in such a path the run folder is `kicad2ant/<board>_<id>/` in your local app-data folder (Windows) or
   your home folder (Linux, macOS). The window shows where.
 
@@ -149,6 +152,7 @@ On Windows you can also drag the `.kicad_pcb` onto `scripts/kicad2ant.bat` (a co
 | `--gnd NET` | found by itself, see below |
 | `--out DIR` | `myboard_kicad2ant/` next to the board. No spaces in the path |
 | `--post` | redo only the post-processing on the saved fields, for example after adding `measured.s1p` |
+| `--view` | open the 3D model in openEMS's viewer (AppCSXCAD) when the run ends |
 
 All options and the model in detail: [docs/USAGE.md](docs/USAGE.md).
 

@@ -1,7 +1,7 @@
 """kicad2ant: simulate a PCB antenna from a KiCad board in openEMS.
 
   python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|coarse|fine] [--f0 MHz] [--band LO HI]
-                      [--feed PAD] [--gnd NET] [--out DIR] [--post]
+                      [--feed PAD] [--gnd NET] [--out DIR] [--post] [--view]
 
 REF is the antenna footprint (default: the one AE*/ANT* or RF_Antenna footprint). Results go to
 BOARD_kicad2ant/ next to the board (or --out): results/<REF>_<mode>_summary.txt and plots.
@@ -21,6 +21,7 @@ ap.add_argument('--band', type=float, nargs=2, metavar=('LO', 'HI'), help='targe
 ap.add_argument('--feed', help='feed pad (default 1)'); ap.add_argument('--gnd', help='ground net (default: net of pad 2, else GND or the largest ground-named zone net)')
 ap.add_argument('--out', help='run folder (default BOARD_kicad2ant next to the board); no spaces')
 ap.add_argument('--post', action='store_true', help='only redo the post-processing on the saved fields')
+ap.add_argument('--view', action='store_true', help="open the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
 a = ap.parse_args()
 
 def octave():
@@ -70,5 +71,14 @@ script = (f"res='{'coarse' if a.mode == 'dry' else a.mode}'; dry_run={int(a.mode
           f"run('{q(os.path.join(HERE, 'antenna_sim.m'))}')")
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display
 r = subprocess.run([octave(), '--no-gui', '--eval', script])
+if a.view and r.returncode == 0:
+    xml = os.path.join(out, 'sim_' + ('coarse' if a.mode == 'dry' else a.mode), 'antenna.xml')
+    exe = next((p for p in (os.path.join(ems, 'AppCSXCAD.exe'), os.path.join(ems, 'bin', 'AppCSXCAD')) if ems and os.path.isfile(p)),
+               shutil.which('AppCSXCAD'))
+    if exe:   # detached and off our pipes: it stays open after this script ends, and the caller is not kept waiting
+        null = subprocess.DEVNULL
+        subprocess.Popen([exe, '--disableEdit', xml], cwd=os.path.dirname(exe), stdin=null, stdout=null, stderr=null,
+                         **({'creationflags': 0x00000008 | 0x00000200} if WIN else {'start_new_session': True}))
+    else: print('warning: --view: AppCSXCAD (the openEMS 3D viewer) was not found')
 print(f'\nresults in {os.path.join(out, "results")}' if r.returncode == 0 else '\nfailed (see above)')
 sys.exit(r.returncode)
