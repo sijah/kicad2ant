@@ -12,10 +12,12 @@ You can run it from a toolbar button in KiCad 10's PCB editor, from the command 
 
 | Model | Match | Pattern |
 |---|---|---|
-| ![geometry](examples/ti_ifa/ifa_kicad2ant/results/AE1_geometry.png) | ![S11 and Zin](examples/ti_ifa/ifa_kicad2ant/results/AE1_coarse_s11_zin.png) | ![pattern](examples/ti_ifa/ifa_kicad2ant/results/AE1_coarse_pattern.png) |
+| ![geometry](examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_geometry.png) | ![S11 and Zin](examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_s11_zin.png) | ![pattern](examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_pattern.png) |
 
-*From [examples/ti_ifa](examples/ti_ifa): TI's SWRA117D 2.4 GHz inverted-F antenna, taken from KiCad's own
-footprint library and placed on a 2-layer board (coarse run).*
+*From [examples/openems_ifa](examples/openems_ifa): the 2.45 GHz inverted-F antenna from openEMS's own
+`inverted_f.m` example, drawn as a KiCad board (coarse run). kicad2ant puts its resonance at 2438 MHz,
+openEMS's script at 2420 MHz. A meandered IFA from KiCad's footprint library is in
+[examples/ti_ifa](examples/ti_ifa).*
 
 This is version 0.1.0 and still being tested. I develop it on Windows with KiCad 10.0.8, Octave 11.1 and
 openEMS v0.37. The Linux and macOS code paths are there but I haven't tried them yet. See

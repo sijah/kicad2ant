@@ -211,7 +211,7 @@ emax = max(sph.E_norm{ip}(:));
 tc = -180:2:180;
 cut = CalcNF2FF(nf2ff, Sim_Path, ffr(ip), tc*pi/180, [0 90]*pi/180, 'Outfile', 'ff_cuts.h5', 'Mode', 1);
 cxy = CalcNF2FF(nf2ff, Sim_Path, ffr(ip), pi/2, tc*pi/180, 'Outfile', 'ff_xy.h5', 'Mode', 1);
-dB = @(E) 20*log10(max(E(:)', 1e-9) / emax) + 10*log10(D(ip));   % directivity, dBi
+dB = @(E) 20*log10(max(E(:)' / emax, 1e-6)) + 10*log10(D(ip));   % directivity, dBi; floor -120 dB below the peak (the fields themselves are ~1e-13)
 end
 
 %% report
@@ -297,7 +297,8 @@ print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r200');
 
 if fast, return; end
 h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 6]);
-plot(tc,dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB(cxy.E_norm{1}), 'k:', 'LineWidth', 1.5);
+set(h, 'defaultaxesfontsize', 12, 'defaulttextfontsize', 12);
+plot(tc,dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB(cxy.E_norm{1}), 'k:', 'LineWidth', 2.5);
 grid on; xlim([-180 180]); ylim([-30 ceil(10*log10(D(ip))) + 2]);
 xlabel('angle (deg): \theta for xz / yz (negative = \phi+180 side), \phi for xy'); ylabel('directivity (dBi)');
 legend('xz (\phi = 0)', 'yz (\phi = 90)', 'xy (\theta = 90)', 'location', 'south');

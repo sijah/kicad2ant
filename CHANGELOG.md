@@ -19,6 +19,9 @@
 - A saved plugin mode from 0.1.0 (a list index) keeps meaning the same mode.
 
 ### Fixed
+- The pattern plot was empty: the dB conversion floored the far field at 1e-9, above the actual
+  field values (~1e-13), so every point came out at +63 dBi, off the plot. The floor is now 120 dB
+  below the peak. The gain table and the `.vtk` were not affected.
 - Two runs in the same run folder (the plugin and the command line, or two command lines) wrecked
   each other's field dumps. The second one is now refused.
 

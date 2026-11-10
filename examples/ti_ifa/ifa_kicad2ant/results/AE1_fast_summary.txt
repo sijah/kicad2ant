@@ -1,0 +1,8 @@
+AE1 fast run (21 s, 64 x 49 x 21 cells, smallest 0.262 mm)
+board: 2 copper layers, 1.545 mm, epsR 4.5; ground GND; port vertical F.Cu -> B.Cu
+fast (S11 only, no far field): confirm with coarse
+resonance (min S11) -8.1 dB at 2391 MHz
+no -10 dB band
+at 2440 MHz: S11 -4.3 dB, Zin 15.0 +22.9j ohm
+reactance crosses zero at: [2073 3225] MHz
+run: converged in 15300 steps; mesh worst neighbour ratio 3.00 (above 2: abrupt cell jump, check the fine run agrees)
