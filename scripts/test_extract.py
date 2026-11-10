@@ -147,4 +147,13 @@ r, t = extract(board(), '--feed', '2'); assert r.returncode == 0 and get(t, 'por
 # 10. a board as KiCad 10 saves it (nets by name only, version 20260206)
 k10 = open(os.path.join(HERE, 'fixtures', 'ifa_kicad10.kicad_pcb'), encoding='utf8').read()
 r, t = extract(k10); assert r.returncode == 0 and get(t, 'gnd_net') == 'GND' and 'vertical F.Cu -> B.Cu' in get(t, 'port_kind'), r.stderr
+
+# 11. automatic pick: the same rule as the plugin (reference AE* / ANT*, a digit not needed), REF** is not picked
+def auto(ref):
+    d = tempfile.mkdtemp(); pcb = os.path.join(d, 'b.kicad_pcb')
+    open(pcb, 'w', newline='\n', encoding='utf8').write(board(ref=f'(property "Reference" "{ref}" (at 0 0 0) (layer "F.SilkS"))'))
+    return subprocess.run([sys.executable, os.path.join(HERE, 'extract_antenna.py'), pcb, 'auto', os.path.join(d, 'g.m')], capture_output=True, text=True)
+for ref in ('ANT', 'AE1', 'ANT2', 'ae'):
+    r = auto(ref); assert r.returncode == 0 and f'antenna footprint: {ref}' in r.stdout, (ref, r.stderr)
+r = auto('REF**'); assert r.returncode != 0 and 'cannot pick the antenna footprint' in r.stderr, r.stderr
 print('OK')

@@ -86,8 +86,8 @@ def refof(fp):
         if p[1] == 'Reference': return p[2]
     for t in kids(fp, 'fp_text'):
         if t[1] == 'reference': return t[2]
-if a.ref == 'auto':   # the one footprint that looks like an antenna: reference AE* / ANT*, or an RF_Antenna library part
-    cand = sorted({refof(f) for f in kids(pcb, 'footprint') if re.match(r'(AE|ANT)\d', refof(f) or '', re.I)
+if a.ref == 'auto':   # the one footprint that looks like an antenna: reference AE* / ANT*, or an RF_Antenna library part (same rule as the plugin's core.is_antenna_ref)
+    cand = sorted({refof(f) for f in kids(pcb, 'footprint') if re.match(r'(AE|ANT)', refof(f) or '', re.I)
                    or 'antenna' in str(f[1]).lower()} - {None})
     assert len(cand) == 1, f'cannot pick the antenna footprint ({cand or "no AE*/ANT* reference"}): give its reference'
     a.ref = cand[0]; print(f'antenna footprint: {a.ref}')
