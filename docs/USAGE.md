@@ -1,0 +1,100 @@
+# kicad2ant
+
+Simulate the PCB antenna on your KiCad board in [openEMS](https://openems.de), with no geometry entered
+by hand. Point it at the `.kicad_pcb` file and you get:
+
+- S11, input impedance and a Smith chart; the -10 dB band and whether it covers your target band
+- directivity, radiation efficiency, gain and realized gain across the band
+- pattern cuts at resonance, plus a 3-D pattern for ParaView
+- a Touchstone `.s1p` file for designing the match network
+- your VNA measurement overlaid on the plots, if you have one
+
+It reads the antenna footprint's copper on any layer and any shape (IFA, MIFA, meander, loop,
+monopole, patch), the ground net's filled zones on every copper layer, the GND vias, the full
+stackup, and the board outline with its cutouts. Works with KiCad 6 to 10 files.
+
+## Install (once)
+
+1. **Python 3** on PATH. Nothing to pip install.
+2. **[GNU Octave](https://octave.org/download)** (tested with 11.1 on Windows).
+3. **[openEMS](https://github.com/thliebig/openEMS-Project/releases)** v0.37 or newer. On Windows,
+   unzip it to a folder **without spaces**, e.g. `C:\openEMS`. Then in Octave, run once:
+   `cd C:\openEMS\matlab; setup` (this builds the HDF5 readers for your Octave).
+
+`kicad2ant.py` looks for Octave and openEMS by itself (on PATH, in `C:\Program Files\GNU Octave`,
+and in `openEMS*` folders up to two levels deep on drives C to H). If it can't find them, set
+`OCTAVE` (path to `octave-gui.exe` or `octave`) and `OPENEMS` (the openEMS folder). On Linux and
+macOS, openEMS can also be on the Octave path through `~/.octaverc`.
+
+## Use
+
+In KiCad, **fill the zones (press B) and save the board.** Set the stackup in Board Setup >
+Physical Stackup. Without one, the board is taken as 2 layers of FR4 εr 4.5. Then:
+
+```
+python ../scripts/kicad2ant.py myboard.kicad_pcb --mode dry                 # check the model first
+python ../scripts/kicad2ant.py myboard.kicad_pcb                            # coarse run, minutes
+python ../scripts/kicad2ant.py myboard.kicad_pcb --mode fine                # numbers you quote
+python ../scripts/kicad2ant.py myboard.kicad_pcb AE2 --f0 868 --band 863 870   # other antenna / band
+```
+
+On Windows you can also drag the `.kicad_pcb` file onto `../scripts/kicad2ant.bat`. That runs a coarse
+2.4 GHz simulation.
+
+| option | default |
+|---|---|
+| `REF` | the one footprint whose reference is AE*/ANT* or whose library name contains "antenna" |
+| `--mode dry\|coarse\|fine` | `coarse`. `dry` builds the model and the geometry picture only |
+| `--f0 MHz`, `--band LO HI` | 2440 and 2400 to 2483.5 (2.4 GHz ISM). For another f0, the band defaults to f0 ± 2 % |
+| `--feed PAD` | pad `1` of the antenna footprint |
+| `--gnd NET` | the net of pad `2`, else `GND` |
+| `--out DIR` | `myboard_kicad2ant/` next to the board. The path must not contain spaces |
+| `--post` | redo only the post-processing on saved fields, e.g. after adding `measured.s1p` |
+
+Results go to `myboard_kicad2ant/results/`:
+- `<REF>_<mode>_summary.txt`
+- the plots: `_s11_zin.png`, `_smith.png`, `_pattern.png` and `<REF>_geometry.png`
+- `.s1p` and `.vtk`
+
+To compare with a measurement, drop your VNA's 1-port file in the run folder as **`measured.s1p`**
+and run again with `--post`.
+
+**Check the dry run first.** `<REF>_geometry.png` shows each copper layer: GND in grey, the antenna
+in orange, the port in magenta. The port must sit on the feed pad, and the ground must be where you
+expect it.
+
+## How it models the board
+
+- Copper is perfect conductor sheets. GND vias and plated holes are wires. One dielectric is
+  extruded over the outline between each pair of copper layers. The board sits in air (λ/4 at f0,
+  at least 5 mm) with PML absorbing boundaries.
+- The feed is a 50 Ω lumped port:
+  - **vertical** from the feed pad to the GND fill under it, when another layer has GND there;
+  - otherwise **in-plane**, from the pad edge to the nearest GND fill edge on the same layer.
+- The mesh follows the rule of thirds at straight antenna edges, uses 0.5 mm cells at the antenna
+  (coarse) or 0.2 mm (fine), and grades smoothly to λ/15 or λ/20 in air.
+
+## Limits: state them with every result
+
+- Only the antenna footprint and the ground net are modelled. Other nets, components and any
+  enclosure are left out; the board is bare in air.
+- Copper is lossless, so radiation efficiency counts dielectric loss only.
+- S11 is at the feed pad, without the matching network or the feed line.
+- Chip antennas can't be modelled: they are a part, not copper.
+- Use coarse runs for trends. Do the final tuning on the real board with a VNA.
+
+## Files
+
+| file | does |
+|---|---|
+| `../scripts/kicad2ant.py` | the command line: extracts, finds Octave and openEMS, runs |
+| `../scripts/kicad2ant.bat` | Windows drag-and-drop wrapper |
+| `../scripts/extract_antenna.py` | `.kicad_pcb` -> `antenna_geom.m` (also usable alone) |
+| `../scripts/antenna_sim.m` | model, mesh, openEMS run, post-processing |
+| `../scripts/test_extract.py` | extractor self-check: `python ../scripts/test_extract.py` |
+| `../examples/ti_ifa/` | TI SWRA117D meander IFA on a 2-layer board, with coarse results |
+| `SKILL.md` | lets [Claude Code](https://claude.com/claude-code) run it for you (`/kicad2ant`) |
+
+Design notes borrowed from [kicad2ems](https://github.com/lowprocess/kicad2ems) (air size, excitation past the band,
+gain table) and from Antmicro's [gerber2ems](https://github.com/antmicro/gerber2ems) (VNA overlay,
+Smith chart, convergence check).
