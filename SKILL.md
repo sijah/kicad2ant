@@ -42,6 +42,49 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
 
 After editing `extract_antenna.py` run `python scripts/test_extract.py` (prints OK).
 
+## Tuning: try antenna changes without touching the user's board or results
+
+Each shape change needs a new FDTD run (`--post` only redraws the same shape). Keep every try apart:
+
+1. **Baseline:** the existing run folder (`BOARD_kicad2ant/`, or the plugin's Output in folder). Read its
+   `results/<REF>_<mode>_summary.txt`; never write into it.
+2. **Variant:** copy the run folder's `board.kicad_pcb` (the exact board that was simulated, zones filled)
+   to a new folder, e.g. `BOARD_try1/board.kicad_pcb`. Edit only the antenna footprint's copper in that
+   copy: its `fp_line` / `fp_poly` / `fp_arc` on copper layers and its pads, in footprint-local mm.
+   Change one thing per variant (arm length, short-pin position, meander count, feed gap) and write
+   down what and by how much.
+3. **Run it into its own folder:** `--out BOARD_try1_kicad2ant --mode dry` first and show the geometry
+   picture, then coarse. Same `REF`, `--f0`, `--band`, `--feed`, `--gnd` as the baseline.
+4. **Compare** with the baseline: resonance, S11 at f0, -10 dB band against the target, gain. A coarse run
+   of a small 2-layer board is about 10-20 min; run variants one after another, not in parallel.
+5. **Fine** only for the variant the user picks.
+
+Do not edit `antenna_geom.m` to make a variant: it also holds the mesh lines snapped to the old copper
+edges. Change the board copy and extract again.
+
+## Applying the chosen variant in KiCad
+
+Never edit KiCad's own libraries (`RF_Antenna`), and never the user's `.kicad_pcb` while KiCad has it open.
+
+1. **Footprint:** find ANT's library id (`(footprint "Lib:Name"` in the board). Copy that `.kicad_mod`
+   into the project's own footprint library as a new name, keep the old one, and put the variant's
+   copper and pads in the copy.
+2. **Into the board,** with the Konnect MCP if it is available (KiCad 10 open on the board, Preferences >
+   Plugins > Enable IPC API): `load_toolset(["library", "pcb_components"])`; `set_footprint_graphics`
+   (replace on the copper layer) and `edit_footprint_pad` write the `.kicad_mod`; then
+   `update_footprints_from_library` with `references: [REF]`, dry run first, show the plan, apply only
+   when the user agrees (one KiCad undo step; position, rotation and nets are kept). Test
+   `set_footprint_graphics` on a copper layer on a throwaway copy first; it is documented for
+   graphic layers.
+   If REF still points at another library's footprint, Konnect cannot swap it: the user does PCB editor >
+   right-click > Change Footprint once, and sets the same footprint in the schematic symbol's Footprint
+   field (else Update PCB from Schematic puts the old antenna back).
+   Without Konnect: give the user the exact changes (which segment, old and new coordinates) to make
+   in the Footprint Editor.
+3. **Check:** the user refills zones (B) and saves; check the GND keep-out still clears the antenna; run
+   kicad2ant once on the real board. The result must match the chosen variant; if not, the swap is wrong
+   (rotation, feed pad number).
+
 ## Limits to state with every result
 
 - Only the antenna footprint and the GND net are modelled: other nets, components and any
