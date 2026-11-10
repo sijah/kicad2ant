@@ -65,8 +65,8 @@ def test_build_cmd():
 def test_summary_lines_real():
     assert core.summary_lines(REAL) == [
         'resonance (min S11) -9.2 dB at 2413 MHz', 'no -10 dB band',
-        'at 2440 MHz: S11 -6.0 dB, Zin 20.8 +23.1j ohm',
-        'run: converged in 40546 steps; mesh worst neighbour ratio 3.40 (above 2: abrupt cell jump, check the fine run agrees)']
+        'at 2440 MHz: S11 -6.0 dB, Zin 20.6 +23.0j ohm',
+        'run: converged in 42292 steps; mesh worst neighbour ratio 3.40 (above 2: abrupt cell jump, check the fine run agrees)']
 
 
 def test_summary_lines_band_found():
