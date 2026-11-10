@@ -354,14 +354,9 @@ class Kicad2antDialog(wx.Dialog):
             wx.MessageBox('Save the board once first.', TITLE)
             return
         os.makedirs(out, exist_ok=True)
-        lock = os.path.join(out, '.running')
-        try:
-            with open(lock) as f:
-                if core.pid_alive(int(f.read().strip() or 0), 'python'):
-                    wx.MessageBox('Another simulation is using this board folder:\n' + out, TITLE)
-                    return
-        except (OSError, ValueError):
-            pass
+        if core.lock_holder(out):   # another run, from this window or the command line
+            wx.MessageBox('Another simulation is using this board folder:\n' + out, TITLE)
+            return
         save_settings(self.settings())
 
         self.phase.SetLabel('Filling zones and saving a copy of the board')
@@ -395,22 +390,18 @@ class Kicad2antDialog(wx.Dialog):
             self.phase.SetLabel('')
             wx.MessageBox('Could not start the simulation: %s' % e, TITLE, wx.ICON_WARNING)
             return
-        with open(lock, 'w') as f:
-            f.write(str(self.proc.pid))
+        core.take_lock(out, self.proc.pid)   # kicad2ant.py takes it too; the same pid either way
         self.run_btn.Disable()
         self.stop_btn.Enable()
         self.run_dir_btn.Enable()   # the folder exists now: watch antenna_geom.m appear
         self.timer.Start(1000)
-        threading.Thread(target=self.reader, args=(self.proc, lock), daemon=True).start()
+        threading.Thread(target=self.reader, args=(self.proc, out), daemon=True).start()
 
-    def reader(self, proc, lock):
+    def reader(self, proc, out):
         for line in proc.stdout:
             wx.CallAfter(self.add_log, line.rstrip())
         code = proc.wait()
-        try:   # here, not in finished(): the dialog may be gone by now
-            os.remove(lock)
-        except OSError:
-            pass
+        core.release_lock(out, proc.pid)   # here, not in finished(): the dialog may be gone by now
         wx.CallAfter(self.finished, code)
 
     def add_log(self, line):

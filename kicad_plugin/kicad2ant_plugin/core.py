@@ -147,6 +147,39 @@ def pid_alive(pid, name=''):
     return True
 
 
+def lock_holder(folder):
+    """The pid of the live kicad2ant run (a python process) named in <folder>/.running, else None."""
+    try:
+        with open(os.path.join(folder, '.running')) as f:
+            pid = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return None
+    return pid if pid_alive(pid, 'python') else None
+
+
+def take_lock(folder, pid):
+    """Marks the run folder as used by `pid`. None if taken (also when `pid` holds it already, as when the plugin
+    wrote its child's pid), else the pid of the other live run, and nothing is written."""
+    holder = lock_holder(folder)
+    if holder not in (None, pid):
+        return holder
+    with open(os.path.join(folder, '.running'), 'w') as f:
+        f.write(str(pid))
+    return None
+
+
+def release_lock(folder, pid):
+    """Removes <folder>/.running if `pid` holds it."""
+    p = os.path.join(folder, '.running')
+    try:
+        with open(p) as f:
+            mine = f.read().strip() == str(pid)
+        if mine:
+            os.remove(p)
+    except OSError:
+        pass
+
+
 def open_folder(path):
     if os.name == 'nt':
         os.startfile(path)

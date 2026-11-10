@@ -51,6 +51,13 @@ if not os.path.isfile(board): sys.exit(f'no such board: {board}')
 out = os.path.abspath(a.out or os.path.splitext(board)[0] + '_kicad2ant')
 if ' ' in out: sys.exit(f'the run folder has a space ({out}): openEMS nf2ff cannot use it, pass --out C:\\sim\\myboard')
 os.makedirs(out, exist_ok=True)
+# the run-folder lock lives in the plugin's core.py: next to this script's folder when installed, in the repo otherwise
+for d in (os.path.dirname(HERE), os.path.join(os.path.dirname(HERE), 'kicad_plugin', 'kicad2ant_plugin')):
+    if os.path.isfile(os.path.join(d, 'core.py')): sys.path.insert(0, d); break
+import core  # noqa: E402
+held = core.take_lock(out, os.getpid())
+if held: sys.exit(f'another kicad2ant run is using {out} (pid {held}): wait for it to end, or give another --out')
+import atexit; atexit.register(core.release_lock, out, os.getpid())
 if a.f0 < 100 and a.mode != 'dry':
     sys.exit(f'f0 {a.f0:g} MHz is below 100 MHz (NFC and other low-frequency loops): this time-domain run would need '
              'millions of steps and stop unconverged after hours. Not supported.')

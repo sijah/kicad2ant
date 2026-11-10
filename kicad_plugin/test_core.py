@@ -116,6 +116,22 @@ def test_failure_line():
     assert core.failure_line(['', 'failed (see above)']) == ''
 
 
+def test_lock_refuses_live_pid():
+    t = tempfile.mkdtemp()
+    assert core.take_lock(t, os.getpid()) is None and core.take_lock(t, os.getpid()) is None   # ours: taken again
+    assert core.take_lock(t, 999999) == os.getpid() == core.lock_holder(t)   # held by a live python (this test)
+
+
+def test_lock_takes_stale():
+    t = tempfile.mkdtemp()
+    write(os.path.join(t, '.running'), '999999')
+    assert core.lock_holder(t) is None and core.take_lock(t, os.getpid()) is None
+    core.release_lock(t, 12345)
+    assert os.path.exists(os.path.join(t, '.running'))   # not ours: kept
+    core.release_lock(t, os.getpid())
+    assert not os.path.exists(os.path.join(t, '.running'))
+
+
 if __name__ == '__main__':
     for name, fn in sorted(globals().items()):
         if name.startswith('test_'):
