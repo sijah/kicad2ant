@@ -6,19 +6,19 @@ Reads, from the board as saved:
   - antenna = every copper item of footprint REF on any copper layer: fp_poly/line/arc/rect/circle (with
     stroke width), pads of any shape/angle/offset (custom pads with their primitives), footprint zones;
     plated through-hole pads become PEC barrels between their layers;
-  - ground = the filled zones of the GND net on every copper layer, and the GND-net vias (PEC lines);
+  - ground = the filled zones and the tracks of the GND net on every copper layer, and the GND-net vias (PEC lines);
   - stackup = copper layer heights and one dielectric per copper pair (sublayers thickness-weighted);
   - outline = the closed Edge.Cuts loops: the largest is the board, the others are cutouts;
   - port = feed pad (--feed, default "1") straight down/up to the nearest GND copper under it, else
     in-plane to the nearest GND copper on its own layer.
-Other nets' tracks, vias and parts are not modelled.  Sim frame (mm): origin = footprint origin,
+Other nets' copper and the parts are not modelled.  Sim frame (mm): origin = footprint origin,
 x = board x, y up (KiCad y flipped), z = 0 at the bottom copper layer."""
 import argparse, math, re, sys
 
 ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
 ap.add_argument('board'); ap.add_argument('ref', help="the antenna footprint's reference, or auto"); ap.add_argument('out', nargs='?', default='antenna_geom.m')
 ap.add_argument('--feed', default='1', help='feed pad number (default 1)')
-ap.add_argument('--gnd', help='ground net (default: net of pad 2 of REF, else GND)')
+ap.add_argument('--gnd', help='ground net (default: net of pad 2 of REF, else GND, else the largest zone net with a ground name)')
 a = ap.parse_args()
 warn = lambda m: print('warning: ' + m, file=sys.stderr)
 
@@ -139,6 +139,7 @@ def inside(p, ring):
     for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
         if (y1 > p[1]) != (y2 > p[1]) and p[0] < x1 + (p[1] - y1) * (x2 - x1) / (y2 - y1): c = not c
     return c
+area = lambda r: abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]))) / 2
 thick = lambda pl, w: [s for p, q in zip(pl, pl[1:]) for s in [seg(p, q, w)] if s]
 
 def path(pts, T):
@@ -205,24 +206,44 @@ assert ant, f'{a.ref} has no copper on any copper layer'
 feeds = [q for q in pads if q['n'] == a.feed]
 assert len(feeds) == 1, f'{a.ref} needs exactly one pad "{a.feed}" as the feed (found {len(feeds)}); pick another with --feed'
 feed = feeds[0]; assert feed['layers'], f'feed pad {a.feed} has no copper'
-gnd = a.gnd or next((q['net'] for q in pads if q['n'] == '2' and q['net']), None) or ('GND' if any(netname(z) == 'GND' for z in kids(pcb, 'zone')) else None)
-assert gnd, 'cannot tell the ground net: pass --gnd NET'
 
-# ---- ground: filled zones + vias of the GND net ----------------------------------------------------
-fills, unfilled = [], 0
+# ---- ground: filled zones, tracks and vias of the GND net ------------------------------------------
+zfill, zempty = {}, {}                         # zone net -> [(layer, ring)], zones without a fill
 for zn in kids(pcb, 'zone'):
-    if netname(zn) != gnd: continue
-    fp_ = kids(zn, 'filled_polygon'); unfilled += not fp_
-    fills += [(one(f, 'layer')[1], path(one(f, 'pts'), bd)) for f in fp_ if one(f, 'layer')[1] in cu_z]
+    n = netname(zn)
+    if not n: continue
+    fp_ = kids(zn, 'filled_polygon'); zempty[n] = zempty.get(n, 0) + (not fp_)
+    zfill.setdefault(n, []).extend((one(f, 'layer')[1], path(one(f, 'pts'), bd)) for f in fp_ if one(f, 'layer')[1] in cu_z)
+zarea = {n: sum(area(r) for _, r in v) for n, v in zfill.items()}
+leaf = lambda n: n.rsplit('/', 1)[-1]          # a net's name without its sheet path
+if a.gnd:   # as typed: the exact net, else its name after the sheet path (/rf/GND for GND), else ignoring case
+    hits = next((h for h in ([n for n in zarea if same(n)] for same in (
+        lambda n: n == a.gnd, lambda n: leaf(n) == a.gnd, lambda n: leaf(n).lower() == a.gnd.lower())) if h), [a.gnd])
+    gnd = max(hits, key=lambda n: zarea.get(n, 0))
+else:
+    gnd = next((q['net'] for q in pads if q['n'] == '2' and q['n'] != a.feed and q['net'] in zarea), None) or ('GND' if 'GND' in zarea else None)
+    if not gnd:   # no pad 2 and no net called GND: the largest zone net with a usual ground name
+        named = [n for n in zarea if re.match(r'((A|D|P|RF)?GND\w*|VSS\w*|0V)$', leaf(n), re.I)]
+        gnd = max(named, key=zarea.get, default=None)
+        if gnd: print(f'ground net: {gnd} (the largest zone net with a ground name; give --gnd for another)')
+assert gnd, f'cannot tell the ground net (nets with zones: {", ".join(sorted(zarea)) or "none"}): give it with --gnd NET, in the plugin as Ground net'
+fills, unfilled = list(zfill.get(gnd, [])), zempty.get(gnd, 0)
 assert fills, f'no filled {gnd} zones on the board' + (' (they exist but are not filled: press B in KiCad, then save)' if unfilled else '')
 if unfilled: warn(f'{unfilled} {gnd} zones have no fill (press B in KiCad and save if that is not intended)')
+for s in kids(pcb, 'segment') + kids(pcb, 'arc'):   # GND tracks: an IFA's short can reach the ground through one
+    L = one(s, 'layer')[1]
+    if netname(s) != gnd or L not in cu_z: continue
+    pl = [bd(*xy(s, k)) for k in ('start', 'end')] if s[0] == 'segment' else arc(*(bd(*xy(s, k)) for k in ('start', 'mid', 'end')))
+    fills += [(L, r) for r in thick(pl, num(s, 'width'))]
 for v in kids(pcb, 'via'):
     if netname(v) == gnd:
         zs = [cu_z[L] for L in cu_of(v)]
         if len(zs) > 1: lines.append(bd(*xy(v, 'at')) + (min(zs), max(zs)))
 
 # ---- port ------------------------------------------------------------------------------------------
-fl = feed['layers'][0]; zf = cu_z[fl]; (fx, fy) = feed['c']
+fl = one(fp, 'layer')[1]                        # a through-hole feed pad: the port on the footprint's own side
+if fl not in feed['layers']: fl = feed['layers'][0]
+zf = cu_z[fl]; (fx, fy) = feed['c']
 bx0, by0 = min(p[0] for p in feed['ring']), min(p[1] for p in feed['ring'])
 bx1, by1 = max(p[0] for p in feed['ring']), max(p[1] for p in feed['ring'])
 under = [L for L in sorted(cu_z, key=lambda L: abs(cu_z[L] - zf)) if L != fl and any(inside((fx, fy), r) for l, r in fills if l == L)]
@@ -237,13 +258,17 @@ else:
             dx, dy = x2 - x1, y2 - y1; L2 = dx * dx + dy * dy
             t = 0 if L2 == 0 else max(0, min(1, ((fx - x1) * dx + (fy - y1) * dy) / L2))
             q = (x1 + t * dx, y1 + t * dy); d = math.hypot(q[0] - fx, q[1] - fy)
-            if best is None or d < best[0]: best = (d, q)
+            across = abs(q[0] - fx) >= abs(q[1] - fy)          # straight across from the pad beats nearer but diagonal
+            key = (not (by0 - 1e-3 <= q[1] <= by1 + 1e-3 if across else bx0 - 1e-3 <= q[0] <= bx1 + 1e-3), d)
+            if best is None or key < best[0]: best = (key, q)
     assert best, f'no {gnd} copper under the feed pad on any layer, nor on its own layer {fl}: nothing to feed against'
     qx, qy = best[1]
     if abs(qx - fx) >= abs(qy - fy):
         e = bx1 if qx > fx else bx0; port, pdir = (min(e, qx), by0, zf, max(e, qx), by1, zf), (1, 0, 0)
     else:
         e = by1 if qy > fy else by0; port, pdir = (bx0, min(e, qy), zf, bx1, max(e, qy), zf), (0, 1, 0)
+    assert not best[0][0], (f'the nearest {gnd} copper to feed pad {a.feed} is diagonal from it, at ({qx:.2f}, {qy:.2f}): a straight port '
+                    f'would end beside it. Bring {gnd} copper straight across from the pad (or under it), or pick another feed pad')
     assert max(port[3] - port[0], port[4] - port[1]) > 1e-3 or pdir == (0, 0, 1), 'feed pad touches GND copper on its own layer'
     pkind = f'in-plane on {fl} to the {gnd} copper at ({qx:.2f}, {qy:.2f})'
 
@@ -263,15 +288,14 @@ for g, Tg in edges:
         (cx, cy), (ex, ey) = xy(g, 'center'), xy(g, 'end'); d = 2 * math.hypot(ex - cx, ey - cy)
         loops.append(stadium(cx, cy, d, d, Tg, 24))
     elif k == 'poly': loops.append(path(one(g, 'pts'), Tg))
-near = lambda p, q: abs(p[0] - q[0]) < 1e-3 and abs(p[1] - q[1]) < 1e-3
+near = lambda p, q: abs(p[0] - q[0]) < 1e-2 and abs(p[1] - q[1]) < 1e-2   # 0.01 mm: what KiCad itself still joins
 while segs:
     ch = segs.pop()
     while not near(ch[0], ch[-1]):
         i = next((i for i, s in enumerate(segs) if near(s[0], ch[-1]) or near(s[-1], ch[-1])), None)
         assert i is not None, f'Edge.Cuts outline is not closed near sim ({ch[-1][0]:.2f}, {ch[-1][1]:.2f})'
         s = segs.pop(i); ch += s[1:] if near(s[0], ch[-1]) else s[-2::-1]
-    loops.append(ch[:-1])
-area = lambda r: abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]))) / 2
+    if len(ch) > 3: loops.append(ch[:-1])        # a stray piece shorter than the tolerance is not a cutout
 assert loops, 'no Edge.Cuts outline on the board'
 loops.sort(key=area, reverse=True); outline, holes = loops[0], loops[1:]
 

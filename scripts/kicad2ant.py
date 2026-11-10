@@ -8,7 +8,7 @@ BOARD_kicad2ant/ next to the board (or --out): results/<REF>_<mode>_summary.txt 
 Put a VNA measurement there as measured.s1p to overlay it. --post redoes only the post-processing.
 Finds Octave and openEMS itself; set OCTAVE / OPENEMS to override.
 """
-import argparse, glob, os, shutil, subprocess, sys
+import argparse, glob, os, re, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
@@ -18,19 +18,18 @@ ap.add_argument('--mode', choices=('dry', 'coarse', 'fine'), default='coarse',
                 help='dry = model + geometry plot only; coarse = minutes; fine = for numbers you quote')
 ap.add_argument('--f0', type=float, default=2440, help='design frequency, MHz (default 2440)')
 ap.add_argument('--band', type=float, nargs=2, metavar=('LO', 'HI'), help='target band, MHz (default 2400 2483.5 at 2.44 GHz, else f0 -/+ 2 %%)')
-ap.add_argument('--feed', help='feed pad (default 1)'); ap.add_argument('--gnd', help='ground net (default: net of pad 2, else GND)')
+ap.add_argument('--feed', help='feed pad (default 1)'); ap.add_argument('--gnd', help='ground net (default: net of pad 2, else GND or the largest ground-named zone net)')
 ap.add_argument('--out', help='run folder (default BOARD_kicad2ant next to the board); no spaces')
 ap.add_argument('--post', action='store_true', help='only redo the post-processing on the saved fields')
 a = ap.parse_args()
 
-def first(*cands):
-    return next((c for c in cands if c and os.path.exists(c)), None)
-
 def octave():
     exe = os.environ.get('OCTAVE') or shutil.which('octave-gui') or shutil.which('octave')
     if not exe and WIN:
-        exe = (sorted(glob.glob(r'C:\Program Files\GNU Octave\Octave-*\mingw64\bin\octave-gui.exe'))
-               + sorted(glob.glob(os.path.expandvars(r'%LOCALAPPDATA%\Programs\GNU Octave\Octave-*\mingw64\bin\octave-gui.exe'))) or [None])[-1]
+        found = (glob.glob(r'C:\Program Files\GNU Octave\Octave-*\mingw64\bin\octave-gui.exe')
+                 + glob.glob(os.path.expandvars(r'%LOCALAPPDATA%\Programs\GNU Octave\Octave-*\mingw64\bin\octave-gui.exe')))
+        ver = lambda p: [int(n) for n in re.findall(r'\d+', re.search(r'Octave-([\d.]*)', p).group(1))]   # 11.1 after 9.2
+        exe = max(found, key=ver, default=None)
     if not exe: sys.exit('Octave not found: install it (octave.org) or set OCTAVE to octave-gui.exe / octave')
     return exe
 
@@ -38,6 +37,8 @@ def openems():
     if 'OPENEMS' in os.environ: return os.environ['OPENEMS']
     exe = shutil.which('openEMS')
     if exe and os.path.isdir(os.path.join(os.path.dirname(exe), 'matlab')): return os.path.dirname(exe)
+    pre = os.path.dirname(os.path.dirname(os.path.realpath(exe))) if exe else ''   # a source build: <prefix>/bin/openEMS
+    if pre and os.path.isdir(os.path.join(pre, 'share', 'openEMS', 'matlab')): return pre
     if WIN:   # the Windows zip is unpacked anywhere: look two folders deep on every drive
         hits = [os.path.dirname(p) for d in 'CDEFGH' for p in glob.glob(f'{d}:/openEMS*/openEMS.exe') + glob.glob(f'{d}:/*/openEMS*/openEMS.exe')
                 + glob.glob(f'{d}:/*/openEMS*/openEMS/openEMS.exe')]
@@ -49,6 +50,9 @@ if not os.path.isfile(board): sys.exit(f'no such board: {board}')
 out = os.path.abspath(a.out or os.path.splitext(board)[0] + '_kicad2ant')
 if ' ' in out: sys.exit(f'the run folder has a space ({out}): openEMS nf2ff cannot use it, pass --out C:\\sim\\myboard')
 os.makedirs(out, exist_ok=True)
+if a.f0 < 100 and a.mode != 'dry':
+    sys.exit(f'f0 {a.f0:g} MHz is below 100 MHz (NFC and other low-frequency loops): this time-domain run would need '
+             'millions of steps and stop unconverged after hours. Not supported.')
 f0 = a.f0 * 1e6
 lo, hi = [b * 1e6 for b in a.band] if a.band else ((2400e6, 2483.5e6) if abs(f0 - 2.44e9) < 1e7 else (f0 * 0.98, f0 * 1.02))
 if not a.band and a.f0 == 2440: print('target band 2400..2483.5 MHz (2.4 GHz ISM); give --f0 / --band for another', flush=True)

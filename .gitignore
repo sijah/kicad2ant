@@ -24,3 +24,8 @@ Thumbs.db
 docs/DEVNOTES.md
 docs/session-log-*.md
 dist/
+
+# plugin package (built by kicad_plugin/build_pcm.py)
+*.zip
+metadata_gitlab_submission.json
+.superpowers/

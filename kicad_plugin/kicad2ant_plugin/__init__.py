@@ -16,12 +16,11 @@ except ImportError:   # loaded as a plain module (development)
 
 PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
-DEFAULTS = {'mode': 1, 'f0': '2440', 'lo': '', 'hi': '', 'octave': ''}
+DEFAULTS = {'mode': 1, 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': ''}
 MODES = [('Check model (seconds)', 'dry'), ('Coarse (minutes)', 'coarse'), ('Fine (much longer)', 'fine')]
 AUTO = 'Auto: the AE* / ANT* / antenna footprint, pad 1'
 GOOD = 'Good: the -10 dB band covers your target band.'
-NOT_ANTENNA = ('Pick a pad on the antenna. Matching parts are not simulated: '
-               'design the match from the .s1p in the results folder.')
+NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
 _dialog = None
 
@@ -51,26 +50,26 @@ def save_settings(s):
 
 
 def selected_feed():
-    """(ref, pad number) of the selected pad, or pad 1 of a selected footprint; a message string when the
-    selection is not on an antenna footprint; None when nothing is selected."""
+    """(ref, pad number, whether the footprint is named like an antenna) of the selected pad, or of pad 1 of a
+    selected footprint; None when nothing is selected. Any footprint is taken: people name antennas E1, A1, X1."""
     board = pcbnew.GetBoard()
     hit = None
     for fp in board.GetFootprints():
+        if fp.IsSelected():   # KiCad marks a selected footprint's pads as selected too, so ask the footprint first
+            hit = (fp, '1')
+            break
         pad = next((p for p in fp.Pads() if p.IsSelected()), None)
         if pad is not None:
             hit = (fp, pad.GetNumber())
             break
     if hit is None:
-        fp = next((f for f in board.GetFootprints() if f.IsSelected()), None)
-        hit = (fp, '1') if fp is not None else None
-    if hit is None:
         return None
     fp, num = hit
     ref = fp.GetReference()
-    return (ref, num) if core.is_antenna_ref(ref, fp.GetFPIDAsString()) else NOT_ANTENNA
+    return ref, num, core.is_antenna_ref(ref, fp.GetFPIDAsString())
 
 
-def child_env(python, octave):
+def child_env(python, octave, openems=''):
     env = dict(os.environ, PYTHONUNBUFFERED='1')
     kicad_dirs = {os.path.normcase(os.path.dirname(sys.executable)), os.path.normcase(sys.prefix)}
     if not any(os.path.normcase(python).startswith(d) for d in kicad_dirs):
@@ -78,6 +77,8 @@ def child_env(python, octave):
         env.pop('PYTHONPATH', None)
     if octave:
         env['OCTAVE'] = octave
+    if openems:
+        env['OPENEMS'] = openems
     return env
 
 
@@ -104,8 +105,11 @@ class Kicad2antDialog(wx.Dialog):
         self.hi = wx.TextCtrl(self, value=s['hi'], size=(70, -1))
         for c in (self.lo, self.hi):
             c.SetToolTip('Target band in MHz. Leave empty: 2400 to 2483.5 at 2440 MHz, else f0 +/- 2 %.')
+        self.gnd = wx.TextCtrl(self, size=(90, -1))
+        self.gnd.SetToolTip('The ground net of this board. Leave empty: the net of the antenna\'s pad 2, else GND, '
+                            'else the largest zone net with a ground name (AGND, GNDA, VSS ...).')
         grid = wx.FlexGridSizer(0, 6, 6, 8)
-        for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('', wx.StaticText(self)),
+        for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('Ground net', self.gnd),
                            ('Band from (MHz)', self.lo), ('to (MHz)', self.hi), ('', wx.StaticText(self))):
             grid.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctl, 0, wx.ALIGN_CENTER_VERTICAL)
@@ -131,6 +135,17 @@ class Kicad2antDialog(wx.Dialog):
         oct_row.Add(self.octave, 1)
         oct_row.Add(browse, 0, wx.LEFT, 4)
 
+        self.openems = wx.TextCtrl(self, value=s['openems'])
+        self.openems.SetToolTip('The openEMS folder, no spaces in the path: the one holding openEMS.exe and matlab on '
+                                'Windows, the install prefix (e.g. ~/opt/openEMS) on Linux and macOS. '
+                                'Leave empty to find openEMS by itself.')
+        browse_ems = wx.Button(self, label='...', size=(30, -1))
+        browse_ems.Bind(wx.EVT_BUTTON, self.on_browse_openems)
+        ems_row = wx.BoxSizer(wx.HORIZONTAL)
+        ems_row.Add(wx.StaticText(self, label='openEMS folder (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        ems_row.Add(self.openems, 1)
+        ems_row.Add(browse_ems, 0, wx.LEFT, 4)
+
         note = wx.StaticText(self, label='Simulate fills the zones (like pressing B) and runs on a copy of the board as '
                                          'it is on screen. Your board file is not changed.')
         note.Wrap(560)
@@ -143,10 +158,14 @@ class Kicad2antDialog(wx.Dialog):
         self.folder_btn = wx.Button(self, label='Open results folder')
         self.folder_btn.Bind(wx.EVT_BUTTON, lambda e: core.open_folder(os.path.join(self.out, 'results')))
         self.folder_btn.Disable()
+        self.run_dir_btn = wx.Button(self, label='Open run folder')
+        self.run_dir_btn.SetToolTip('The board copy, antenna_geom.m (the model Octave reads) and the sim_* folders.')
+        self.run_dir_btn.Bind(wx.EVT_BUTTON, lambda e: core.open_folder(self.out))
+        self.run_dir_btn.Disable()
         close = wx.Button(self, wx.ID_CLOSE, 'Close')
         close.Bind(wx.EVT_BUTTON, lambda e: self.Close())
         buttons = wx.BoxSizer(wx.HORIZONTAL)
-        for b in (self.run_btn, self.stop_btn, self.folder_btn):
+        for b in (self.run_btn, self.stop_btn, self.folder_btn, self.run_dir_btn):
             buttons.Add(b, 0, wx.RIGHT, 6)
         buttons.AddStretchSpacer()
         buttons.Add(close)
@@ -163,6 +182,7 @@ class Kicad2antDialog(wx.Dialog):
         root.Add(grid, 0, wx.ALL, 10)
         root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(oct_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(ems_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(note, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(self.phase, 0, wx.LEFT | wx.RIGHT, 10)
@@ -183,24 +203,28 @@ class Kicad2antDialog(wx.Dialog):
 
     # ------------------------------------------------------------------ feed and settings
 
-    def set_feed(self, feed):
+    def set_feed(self, feed, named=True):
         self.feed = feed
-        self.feed_txt.SetLabel(AUTO if feed is None else '%s pad %s' % feed)
+        self.feed_board = pcbnew.GetBoard().GetFileName()   # the pick belongs to this board only
+        self.feed_txt.SetLabel(AUTO if feed is None else '%s pad %s' % feed + ('' if named else NOT_NAMED))
         self.Layout()
 
     def on_use_selected(self, _):
         hit = selected_feed()
         if hit is None:
             wx.MessageBox('Nothing is selected. Click the feed pad of the antenna in the PCB editor first.', TITLE)
-        elif isinstance(hit, str):
-            wx.MessageBox(hit, TITLE, wx.ICON_INFORMATION)
         else:
-            self.set_feed(hit)
+            self.set_feed(hit[:2], hit[2])
 
     def on_browse(self, _):
         with wx.FileDialog(self, 'Octave program (octave-gui.exe or octave)') as d:
             if d.ShowModal() == wx.ID_OK:
                 self.octave.SetValue(d.GetPath())
+
+    def on_browse_openems(self, _):
+        with wx.DirDialog(self, 'openEMS folder (the one with openEMS.exe and matlab)') as d:
+            if d.ShowModal() == wx.ID_OK:
+                self.openems.SetValue(d.GetPath())
 
     def show_previous(self):
         """Shows the newest earlier result of this board for the chosen mode."""
@@ -247,7 +271,7 @@ class Kicad2antDialog(wx.Dialog):
         except (OSError, ValueError):
             pass
         save_settings({'mode': self.mode_ctl.GetSelection(), 'f0': f0, 'lo': lo, 'hi': hi,
-                       'octave': self.octave.GetValue().strip()})
+                       'octave': self.octave.GetValue().strip(), 'openems': self.openems.GetValue().strip()})
 
         self.phase.SetLabel('Filling zones and saving a copy of the board')
         wx.SafeYield()
@@ -257,8 +281,10 @@ class Kicad2antDialog(wx.Dialog):
         copy = os.path.join(out, 'board.kicad_pcb')
         pcbnew.SaveBoard(copy, board, True)   # True: leave the open project's settings where they are
 
+        if self.feed and self.feed_board != board.GetFileName():   # another board was opened under this window
+            self.set_feed(None)
         ref, num = self.feed if self.feed else ('auto', '')
-        cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi))
+        cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip())
         self.out, self.mode, self.started = out, mode, time.time()
         self.log_pos, self.log_rest, self.best, self.stopped = 0, '', 0.0, False
         self.log.Clear()
@@ -272,7 +298,8 @@ class Kicad2antDialog(wx.Dialog):
         try:
             self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                          encoding='utf-8', errors='replace', cwd=out,
-                                         env=child_env(python, self.octave.GetValue().strip()), **kw)
+                                         env=child_env(python, self.octave.GetValue().strip(),
+                                                       self.openems.GetValue().strip()), **kw)
         except OSError as e:
             self.phase.SetLabel('')
             wx.MessageBox('Could not start the simulation: %s' % e, TITLE, wx.ICON_WARNING)
@@ -281,6 +308,7 @@ class Kicad2antDialog(wx.Dialog):
             f.write(str(self.proc.pid))
         self.run_btn.Disable()
         self.stop_btn.Enable()
+        self.run_dir_btn.Enable()   # the folder exists now: watch antenna_geom.m appear
         self.timer.Start(1000)
         threading.Thread(target=self.reader, args=(self.proc, lock), daemon=True).start()
 
@@ -352,6 +380,7 @@ class Kicad2antDialog(wx.Dialog):
                                   (core.failure_line(self.log.GetValue().splitlines()) or 'Failed: see the log below.'))
             self.summary.Wrap(560)
         self.folder_btn.Enable(os.path.isdir(os.path.join(self.out, 'results')))
+        self.run_dir_btn.Enable(os.path.isdir(self.out))
         self.Layout()
         self.Fit()
 
@@ -371,6 +400,7 @@ class Kicad2antDialog(wx.Dialog):
                 img.Rescale(560, int(img.GetHeight() * 560 / img.GetWidth()), wx.IMAGE_QUALITY_HIGH)
             self.picture.SetBitmap(wx.Bitmap(img))
         self.folder_btn.Enable()
+        self.run_dir_btn.Enable()
         self.Layout()
         self.Fit()
 

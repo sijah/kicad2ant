@@ -1,6 +1,6 @@
 % kicad2ant: PCB antenna from a KiCad board: S11, Zin, directivity / efficiency / gain over
 % frequency, pattern.  Normally started by kicad2ant.py, which extracts antenna_geom.m (the antenna
-% footprint's copper, the GND net's zone fills and vias, the stackup, the outline, the feed port)
+% footprint's copper, the GND net's zone fills, tracks and vias, the stackup, the outline, the feed port)
 % into the run folder and sets the variables below.
 % Model: one dielectric per copper pair, copper as PEC sheets, GND vias / plated holes as PEC lines,
 % 50 ohm lumped port at the feed pad, board in air, PML_8 on all sides.  Other nets' copper and the
@@ -21,9 +21,14 @@ here = run_dir;
 assert(isempty(strfind(here, ' ')), 'the run folder path has a space (%s): nf2ff.exe is run unquoted, use another', here);
 % openEMS v0.37+ in a path WITHOUT spaces; its matlab folder must hold h5*_octave.oct built for this
 % Octave (run `setup` there once).  ems = '' uses openEMS already on the Octave path (.octaverc).
+% ems: the Windows zip's folder (matlab/, CTB/), or the prefix of a source build (share/openEMS/matlab, share/CSXCAD/matlab)
 if ~exist('ems', 'var'), ems = getenv('OPENEMS'); end
-if ~isempty(ems), addpath(fullfile(ems, 'matlab'), fullfile(ems, 'CTB'), '-begin'); end  % ahead of old paths in .octaverc
-assert(exist('InitFDTD', 'file') == 2, 'openEMS Octave scripts not found: set OPENEMS to the openEMS install folder');
+if ~isempty(ems)                   % ahead of old paths in .octaverc
+  if exist(fullfile(ems, 'matlab'), 'dir'), addpath(fullfile(ems, 'matlab'), fullfile(ems, 'CTB'), '-begin');
+  else, addpath(fullfile(ems, 'share', 'openEMS', 'matlab'), fullfile(ems, 'share', 'CSXCAD', 'matlab'), '-begin'); end
+end
+assert(exist('InitFDTD', 'file') == 2, ['openEMS Octave scripts not found: install openEMS, then give its folder ' ...
+       '(OPENEMS, or openEMS folder in the plugin): the one holding matlab/ on Windows, the install prefix elsewhere']);
 assert(exist(fullfile(here, 'antenna_geom.m'), 'file') == 2, 'no antenna_geom.m in %s: run kicad2ant.py', here);
 
 physical_constants; unit = 1e-3;   % mm

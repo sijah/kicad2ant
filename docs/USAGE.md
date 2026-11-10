@@ -10,8 +10,10 @@ by hand. Point it at the `.kicad_pcb` file and you get:
 - your VNA measurement overlaid on the plots, if you have one
 
 It reads the antenna footprint's copper on any layer and any shape (IFA, MIFA, meander, loop,
-monopole, patch), the ground net's filled zones on every copper layer, the GND vias, the full
-stackup, and the board outline with its cutouts. Works with KiCad 6 to 10 files.
+monopole, patch), the ground net's filled zones and tracks on every copper layer, the GND vias, the
+full stackup, and the board outline with its cutouts. Written for and tested with KiCad 10 files.
+
+This page is about the command line. The KiCad toolbar plugin is in the [README](../README.md).
 
 ## Install (once)
 
@@ -23,8 +25,9 @@ stackup, and the board outline with its cutouts. Works with KiCad 6 to 10 files.
 
 `kicad2ant.py` looks for Octave and openEMS by itself (on PATH, in `C:\Program Files\GNU Octave`,
 and in `openEMS*` folders up to two levels deep on drives C to H). If it can't find them, set
-`OCTAVE` (path to `octave-gui.exe` or `octave`) and `OPENEMS` (the openEMS folder). On Linux and
-macOS, openEMS can also be on the Octave path through `~/.octaverc`.
+`OCTAVE` (path to `octave-gui.exe` or `octave`) and `OPENEMS`: the folder that holds `matlab/` on
+Windows, the install prefix (with `bin/` and `share/`) on Linux and macOS. There, openEMS can also be
+on the Octave path through `~/.octaverc`.
 
 ## Use
 
@@ -47,7 +50,7 @@ On Windows you can also drag the `.kicad_pcb` file onto `../scripts/kicad2ant.ba
 | `--mode dry\|coarse\|fine` | `coarse`. `dry` builds the model and the geometry picture only |
 | `--f0 MHz`, `--band LO HI` | 2440 and 2400 to 2483.5 (2.4 GHz ISM). For another f0, the band defaults to f0 ± 2 % |
 | `--feed PAD` | pad `1` of the antenna footprint |
-| `--gnd NET` | the net of pad `2`, else `GND` |
+| `--gnd NET` | the net of pad `2`, else `GND`, else the largest zone net with a ground name (`AGND`, `GNDA`, `VSS`, `0V`, ...). A name is matched exactly, then without its sheet path, then without case |
 | `--out DIR` | `myboard_kicad2ant/` next to the board. The path must not contain spaces |
 | `--post` | redo only the post-processing on saved fields, e.g. after adding `measured.s1p` |
 
@@ -65,12 +68,14 @@ expect it.
 
 ## How it models the board
 
-- Copper is perfect conductor sheets. GND vias and plated holes are wires. One dielectric is
+- Copper is perfect conductor sheets: the antenna, the GND zone fills and the GND tracks. GND vias
+  and plated holes are wires. One dielectric is
   extruded over the outline between each pair of copper layers. The board sits in air (λ/4 at f0,
   at least 5 mm) with PML absorbing boundaries.
 - The feed is a 50 Ω lumped port:
   - **vertical** from the feed pad to the GND fill under it, when another layer has GND there;
-  - otherwise **in-plane**, from the pad edge to the nearest GND fill edge on the same layer.
+  - otherwise **in-plane**, from the pad edge to the nearest GND fill edge on the same layer. That
+    edge must be straight across from the pad (not diagonal), or the extractor stops.
 - The mesh follows the rule of thirds at straight antenna edges, uses 0.5 mm cells at the antenna
   (coarse) or 0.2 mm (fine), and grades smoothly to λ/15 or λ/20 in air.
 
@@ -81,6 +86,8 @@ expect it.
 - Copper is lossless, so radiation efficiency counts dielectric loss only.
 - S11 is at the feed pad, without the matching network or the feed line.
 - Chip antennas can't be modelled: they are a part, not copper.
+- Below 100 MHz (NFC and other low-frequency loops) it refuses to run: the solver would need
+  millions of steps.
 - Use coarse runs for trends. Do the final tuning on the real board with a VNA.
 
 ## Files

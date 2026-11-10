@@ -109,4 +109,42 @@ for name in ('Texas_SWRA117D_2.4GHz_Left', 'Texas_SWRA416_868MHz_915MHz') if lib
     r, t = extract(board(footprint=src))
     assert r.returncode == 0, (name, r.stderr)
     print(f'{name}: {r.stdout.strip()}')
+
+# 5. the ground net: a sheet-path name from pad 2, a ground-named zone net when pad 2 has none, --gnd typed loosely
+agnd = board().replace('"GND"', '"/rf/AGND"')
+r, t = extract(agnd); assert r.returncode == 0 and get(t, 'gnd_net') == '/rf/AGND', r.stderr
+nopad2 = agnd.replace('"*.Mask") (net 1 "/rf/AGND")', '"*.Mask")'); assert nopad2 != agnd
+r, t = extract(nopad2); assert r.returncode == 0 and get(t, 'gnd_net') == '/rf/AGND' and 'ground net: /rf/AGND' in r.stdout, r.stderr
+r, t = extract(nopad2, '--gnd', 'agnd'); assert r.returncode == 0 and get(t, 'gnd_net') == '/rf/AGND', r.stderr
+r, _ = extract(nopad2.replace('AGND', 'PLANE')); assert r.returncode and '/rf/PLANE' in r.stderr and 'Ground net' in r.stderr, r.stderr
+# pad 2 on a net with no zone (not connected) or pad 2 as the feed: it does not name the ground
+r, t = extract(board().replace('"*.Mask") (net 1 "GND")', '"*.Mask") (net 3 "unconnected-(AE1-Pad2)")')); assert r.returncode == 0 and get(t, 'gnd_net') == 'GND', r.stderr
+r, t = extract(board().replace('(net 2 "RF")', '(net 1 "GND")').replace('"*.Mask") (net 1 "GND")', '"*.Mask") (net 2 "RF")'), '--feed', '2'); assert r.returncode == 0 and get(t, 'gnd_net') == 'GND', r.stderr
+
+# 6. a GND track is ground copper (an IFA's short can reach the ground through one); another net's track is not
+trk = '\t(segment (start 100 49.5) (end 103 49.5) (width 0.2) (layer "F.Cu") (net %d))\n\t(via (at 90 30)'
+r, t = extract(board().replace('\t(via (at 90 30)', trk % 1)); assert r.returncode == 0 and t.count('geom.gnd{end+1}') == 4, r.stderr
+r, t = extract(board().replace('\t(via (at 90 30)', trk % 2)); assert r.returncode == 0 and t.count('geom.gnd{end+1}') == 3, r.stderr
+
+# 7. ground copper only diagonal from the feed pad: no straight port reaches it, so stop and say so
+diag = board(in1_y=49).replace('(xy 80 20) (xy 130 20) (xy 130 49) (xy 80 49)', '(xy 105 20) (xy 130 20) (xy 130 49) (xy 105 49)')
+r, _ = extract(diag); assert r.returncode and 'diagonal' in r.stderr, r.stderr
+# ... but straight-across copper wins over a nearer diagonal corner (here a GND track's end)
+r, t = extract(board(in1_y=49).replace('\t(via (at 90 30)', '\t(segment (start 99 49.2) (end 100.4 49.2) (width 0.2) (layer "F.Cu") (net 1))\n\t(via (at 90 30)'))
+assert r.returncode == 0 and get(t, 'port_dir') == [0, 1, 0], r.stderr
+
+# 8. an outline gap KiCad still joins (0.005 mm) is closed; a real gap (0.05 mm) is an error
+gap = lambda g: board().replace('(start 80 53) (end 80 20)', f'(start 80 53) (end 80 {20 + g})')
+r, _ = extract(gap(0.005)); assert r.returncode == 0, r.stderr
+r, _ = extract(gap(0.05)); assert r.returncode and 'not closed' in r.stderr, r.stderr
+# an outline piece shorter than that is dropped, not kept as a one-point cutout
+tiny = gap(0.004).replace('\t(via (at 90 30)', '\t(gr_line (start 80 20.004) (end 80 20) (layer "Edge.Cuts"))\n\t(via (at 90 30)')
+r, _ = extract(tiny); assert r.returncode == 0 and ' 1 cutouts' in r.stdout, (r.stdout, r.stderr)
+
+# 9. a through-hole feed pad: the port starts on the footprint's side, not on the bottom layer
+r, t = extract(board(), '--feed', '2'); assert r.returncode == 0 and get(t, 'port_kind').startswith('vertical F.Cu'), (r.stderr, t[:300])
+
+# 10. a board as KiCad 10 saves it (nets by name only, version 20260206)
+k10 = open(os.path.join(HERE, 'fixtures', 'ifa_kicad10.kicad_pcb'), encoding='utf8').read()
+r, t = extract(k10); assert r.returncode == 0 and get(t, 'gnd_net') == 'GND' and 'vertical F.Cu -> B.Cu' in get(t, 'port_kind'), r.stderr
 print('OK')

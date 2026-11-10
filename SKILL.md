@@ -1,6 +1,6 @@
 ---
 name: kicad2ant
-description: Simulates a printed PCB antenna footprint from a KiCad board in openEMS (FDTD) via Octave - extracts the antenna footprint's copper on any layer, the GND net's zone fills and vias on every copper layer, the full stackup, the board outline with cutouts and the feed port from the .kicad_pcb, builds the model, runs it, and reports S11, Zin, Smith chart, the -10 dB band, directivity / radiation efficiency / gain / realized gain over the band, pattern cuts, a Touchstone .s1p for matching-network design and an overlay of a VNA measurement. Use when the user wants to simulate, check or tune a PCB antenna (IFA, MIFA, meander, loop, monopole, patch) from KiCad, see its S11 or pattern, compare it with a measurement, or get an .s1p for the match.
+description: Simulates a printed PCB antenna footprint from a KiCad board in openEMS (FDTD) via Octave - extracts the antenna footprint's copper on any layer, the GND net's zone fills, tracks and vias on every copper layer, the full stackup, the board outline with cutouts and the feed port from the .kicad_pcb, builds the model, runs it, and reports S11, Zin, Smith chart, the -10 dB band, directivity / radiation efficiency / gain / realized gain over the band, pattern cuts, a Touchstone .s1p for matching-network design and an overlay of a VNA measurement. Use when the user wants to simulate, check or tune a PCB antenna (IFA, MIFA, meander, loop, monopole, patch) from KiCad, see its S11 or pattern, compare it with a measurement, or get an .s1p for the match.
 ---
 
 # kicad2ant: KiCad antenna -> openEMS
@@ -15,7 +15,7 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
 | `REF` | the one AE*/ANT* / RF_Antenna footprint (error lists candidates if not exactly one) |
 | `--mode dry\|coarse\|fine` | `coarse` |
 | `--f0 MHz`, `--band LO HI` | 2440, 2400..2483.5; another f0 -> band f0 -/+ 2 % |
-| `--feed PAD`, `--gnd NET` | pad 1; the net of pad 2, else GND |
+| `--feed PAD`, `--gnd NET` | pad 1; the net of pad 2, else GND, else the largest ground-named zone net (printed as `ground net: ...`) |
 | `--out DIR` | `BOARD_kicad2ant` (no spaces) |
 | `--post` | post-processing only, on saved fields (refuses if the board / parameters / mesh changed) |
 
@@ -49,4 +49,5 @@ After editing `extract_antenna.py` run `python scripts/test_extract.py` (prints 
 - Copper is lossless (PEC): radiation efficiency counts dielectric loss only.
 - Lumped port at the feed pad, not de-embedded: S11 is at the pad, without matching network and
   feed line. Chip antennas (a component, not copper) cannot be modelled.
+- f0 below 100 MHz (NFC loops) is refused: not practical in FDTD.
 - Coarse is for trends; final tuning is on the real board with a VNA.

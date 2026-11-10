@@ -22,14 +22,6 @@ def phase(line):
     return next((name for key, name in PHASES if key in line), None)
 
 
-def antenna_ref(line):
-    return line[len('antenna footprint:'):].strip() if line.startswith('antenna footprint:') else None
-
-
-def safe_name(ref):
-    return re.sub(r'[^\w-]', '_', ref)   # as antenna_sim.m names its result files
-
-
 def is_antenna_ref(ref, lib_name):
     """The footprint kicad2ant would treat as an antenna (same rule as its automatic pick)."""
     return bool(re.match(r'(AE|ANT)', ref, re.I)) or 'antenna' in lib_name.lower()
@@ -43,14 +35,15 @@ def run_dir(board_path, env=os.environ):
     here = os.path.join(os.path.dirname(board_path), stem + '_kicad2ant')
     if ' ' not in here:
         return here
-    base = env.get('LOCALAPPDATA', '')
-    if not base or ' ' in base:
-        base = 'C:\\' if os.name == 'nt' else '/tmp'
+    # the home folder before the temp folder: results there survive a reboot
+    for base in (env.get('LOCALAPPDATA'), env.get('USERPROFILE') or env.get('HOME'), 'C:\\' if os.name == 'nt' else '/tmp'):
+        if base and ' ' not in base:
+            break
     tag = hashlib.md5(board_path.encode('utf-8')).hexdigest()[:6]
     return os.path.join(base, 'kicad2ant', stem.replace(' ', '_') + '_' + tag)
 
 
-def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=()):
+def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd=''):
     cmd = [python, script, board_copy, ref or 'auto', '--mode', mode, '--out', out]
     if feed:
         cmd += ['--feed', feed]
@@ -58,6 +51,8 @@ def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='',
         cmd += ['--f0', f0]
     if len(band) == 2 and all(band):
         cmd += ['--band', band[0], band[1]]
+    if gnd:
+        cmd += ['--gnd', gnd]
     return cmd
 
 

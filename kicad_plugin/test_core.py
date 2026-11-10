@@ -24,17 +24,15 @@ def test_progress():
     assert core.TARGET_DB.get('dry') is None and core.TARGET_DB['fine'] == 50.0
 
 
-def test_phase_and_ref():
+def test_phase():
     assert core.phase("antenna footprint: AE1") == 'Reading the board'
     assert core.phase("coarse mesh: 108 x 84 x 43 = 0.39 Mcells, smallest cell 0.150 mm") == 'Meshing'
     assert core.phase("Running FDTD engine... this may take a while... grab a cup of coffee?!?") == 'Simulating'
     assert core.phase("Time for 40546 iterations with 390096.00 cells : 120.4 sec") == 'Post-processing'
     assert core.phase("whatever") is None
-    assert core.antenna_ref("antenna footprint: AE 1") == 'AE 1' and core.antenna_ref("x") is None
-    assert core.safe_name('U$1') == 'U_1'
 
 
-def test_feed_ref_rejects_non_antenna():
+def test_antenna_ref_rule():
     assert core.is_antenna_ref('AE1', 'x') and core.is_antenna_ref('ant2', 'x')
     assert core.is_antenna_ref('J3', 'RF_Antenna:Texas_SWRA117D_2.4GHz_Left')
     assert not core.is_antenna_ref('L4', 'Inductor_SMD:L_0402')
@@ -46,6 +44,8 @@ def test_run_dir():
         core.run_dir('', {}); assert False
     except ValueError:
         pass
+    home = core.run_dir("/a b/x.kicad_pcb", {'HOME': '/home/u'})   # not the temp folder: results survive a reboot
+    assert home.startswith(os.path.join('/home/u', 'kicad2ant', 'x_')), home
     if os.name == 'nt':
         d = core.run_dir(r"C:\Users\A B\p\my board.kicad_pcb", {'LOCALAPPDATA': r"C:\Users\A B\AppData\Local"})
         assert ' ' not in d and d.startswith('C:\\kicad2ant') and '\\my_board_' in d, d
@@ -57,8 +57,8 @@ def test_run_dir():
 def test_build_cmd():
     assert core.build_cmd('py', 'k.py', 'b', 'o', 'coarse', ref='AE2', feed='1', f0='868', band=('863', '870')) == \
         ['py', 'k.py', 'b', 'AE2', '--mode', 'coarse', '--out', 'o', '--feed', '1', '--f0', '868', '--band', '863', '870']
-    assert core.build_cmd('py', 'k.py', 'b', 'o', 'dry', ref='', band=('863', '')) == \
-        ['py', 'k.py', 'b', 'auto', '--mode', 'dry', '--out', 'o']
+    assert core.build_cmd('py', 'k.py', 'b', 'o', 'dry', ref='', band=('863', ''), gnd='GNDA') == \
+        ['py', 'k.py', 'b', 'auto', '--mode', 'dry', '--out', 'o', '--gnd', 'GNDA']
 
 
 def test_summary_lines_real():
