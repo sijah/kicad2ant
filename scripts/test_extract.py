@@ -156,4 +156,12 @@ def auto(ref):
 for ref in ('ANT', 'AE1', 'ANT2', 'ae'):
     r = auto(ref); assert r.returncode == 0 and f'antenna footprint: {ref}' in r.stdout, (ref, r.stderr)
 r = auto('REF**'); assert r.returncode != 0 and 'cannot pick the antenna footprint' in r.stderr, r.stderr
+
+# 12. a copper poly with a keyhole around a drill and a zero-width spike becomes one simple 4-corner ring
+ring = ('(xy 0 0.5) (xy 10 0.5) (xy 10 1.5) (xy 3.2 1.5) (xy 3.2 1) (xy 3 0.8) (xy 2.8 1) (xy 3 1.2) (xy 3.2 1) '
+        '(xy 3.2 1.5) (xy 0 1.5) (xy 0 0.5) (xy 0 0.2)')
+r, t = extract(board().replace('(xy 0 0.5) (xy 10 0.5) (xy 10 1.5) (xy 0 1.5)', ring)); assert r.returncode == 0, r.stderr
+first = re.search(r"geom\.ant\{end\+1\} = struct\('layer', 'F\.Cu'.*?'pts', \[([^\]]*)\]", t).group(1)
+v = [float(x) for x in first.replace(';', ' ').split()]
+assert len(v) == 2 * 5 and abs(area(v) - 10) < 1e-6, first   # 4 corners + the slit mouth on the edge
 print('OK')

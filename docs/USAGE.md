@@ -52,6 +52,7 @@ On Windows you can also drag the `.kicad_pcb` file onto `../scripts/kicad2ant.ba
 | `--f0 MHz`, `--band LO HI` | 2440 and 2400 to 2483.5 (2.4 GHz ISM). For another f0, the band defaults to f0 ± 2 % |
 | `--feed PAD` | pad `1` of the antenna footprint |
 | `--gnd NET` | the net of pad `2`, else `GND`, else the largest zone net with a ground name (`AGND`, `GNDA`, `VSS`, `0V`, ...). A name is matched exactly, then without its sheet path, then without case |
+| `--case ER TAND WALL SIDE TOP BOTTOM` | none: the board in air. A plastic case as a box shell around the board: εr, loss tangent, wall thickness and the gaps to the board at the sides, on top (F.Cu side) and below, mm; e.g. `--case 3 0.01 2 1 1 1` for ABS. In the plugin: **Around the board: Plastic case** |
 | `--out DIR` | `myboard_kicad2ant/` next to the board. The path must not contain spaces |
 | `--post` | redo only the post-processing on saved fields, e.g. after adding `measured.s1p` |
 
@@ -61,7 +62,9 @@ Results go to `myboard_kicad2ant/results/`:
 - `.s1p` and `.vtk`
 
 To compare with a measurement, drop your VNA's 1-port file in the run folder as **`measured.s1p`**
-and run again with `--post`.
+and run again with `--post`. `measured1.s1p`, `measured2.s1p`, … are overlaid too, each in its own colour;
+each run also keeps the result it replaces in `history/` and overlays the last two earlier runs of
+the same mode, so antenna versions are compared without copying anything.
 
 **Check the dry run first.** `<REF>_geometry.png` shows each copper layer: GND in grey, the antenna
 in orange, the port in magenta. The port must sit on the feed pad, and the ground must be where you
@@ -84,8 +87,9 @@ expect it.
 
 ## Limits: state them with every result
 
-- Only the antenna footprint and the ground net are modelled. Other nets, components and any
-  enclosure are left out; the board is bare in air.
+- Only the antenna footprint and the ground net are modelled. Other nets and components are left
+  out. The board is in air, or in a box-shaped plastic case (`--case`): one material, flat walls, the
+  box around the board outline's bounding box; ribs, bosses and curved walls are not modelled.
 - Copper is lossless, so radiation efficiency counts dielectric loss only.
 - S11 is at the feed pad, without the matching network or the feed line.
 - Chip antennas can't be modelled: they are a part, not copper.

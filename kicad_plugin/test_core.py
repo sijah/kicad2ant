@@ -62,6 +62,19 @@ def test_build_cmd():
         ['py', 'k.py', 'b', 'auto', '--mode', 'dry', '--out', 'o', '--gnd', 'GNDA']
 
 
+def test_case():
+    assert core.case_args(['3.0', '0.01', '2', '1', '0', '1.5']) == ['3', '0.01', '2', '1', '0', '1.5']
+    for bad in (['0.5', '0', '2', '1', '1', '1'], ['3', '0', '0', '1', '1', '1'], ['3', '0', '2', '-1', '1', '1'],
+                ['3', '0', '2', '1', '1'], ['3', 'x', '2', '1', '1', '1'], ['nan', '0', '2', '1', '1', '1']):
+        try:
+            core.case_args(bad)
+            raise AssertionError(bad)
+        except ValueError:
+            pass
+    assert core.build_cmd('py', 'k.py', 'b', 'o', 'fast', case=['3', '0.01', '2', '1', '1', '1'])[-7:] ==         ['--case', '3', '0.01', '2', '1', '1', '1']
+    assert '--case' not in core.build_cmd('py', 'k.py', 'b', 'o', 'fast')
+
+
 def test_summary_lines_real():
     assert core.summary_lines(REAL) == [
         'resonance (min S11) -9.2 dB at 2413 MHz', 'no -10 dB band',

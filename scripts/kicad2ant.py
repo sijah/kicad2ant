@@ -1,11 +1,12 @@
 """kicad2ant: simulate a PCB antenna from a KiCad board in openEMS.
 
   python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|fast|coarse|fine] [--f0 MHz] [--band LO HI]
-                      [--feed PAD] [--gnd NET] [--out DIR] [--post] [--view]
+                      [--feed PAD] [--gnd NET] [--case ER TAND WALL SIDE TOP BOTTOM] [--out DIR]
+                      [--post] [--view]
 
 REF is the antenna footprint (default: the one AE*/ANT* or RF_Antenna footprint). Results go to
 BOARD_kicad2ant/ next to the board (or --out): results/<REF>_<mode>_summary.txt and plots.
-Put a VNA measurement there as measured.s1p to overlay it. --post redoes only the post-processing.
+Put a VNA measurement there as measured.s1p (more as measured1.s1p, measured2.s1p ..) to overlay it. --post redoes only the post-processing.
 Finds Octave and openEMS itself; set OCTAVE / OPENEMS to override.
 """
 import argparse, glob, os, re, shutil, subprocess, sys
@@ -21,6 +22,9 @@ ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fa
 ap.add_argument('--f0', type=float, default=2440, help='design frequency, MHz (default 2440)')
 ap.add_argument('--band', type=float, nargs=2, metavar=('LO', 'HI'), help='target band, MHz (default 2400 2483.5 at 2.44 GHz, else f0 -/+ 2 %%)')
 ap.add_argument('--feed', help='feed pad (default 1)'); ap.add_argument('--gnd', help='ground net (default: net of pad 2, else GND or the largest ground-named zone net)')
+ap.add_argument('--case', type=float, nargs=6, metavar=('ER', 'TAND', 'WALL', 'SIDE', 'TOP', 'BOTTOM'),
+                help='plastic case, a box shell around the board: epsR, loss tangent, wall thickness and the gaps to the '
+                     'board at the sides, top (F.Cu side) and bottom, mm; e.g. 3 0.01 2 1 1 1 for ABS. Default: the board in air')
 ap.add_argument('--out', help='run folder (default BOARD_kicad2ant next to the board); no spaces')
 ap.add_argument('--post', action='store_true', help='only redo the post-processing on the saved fields')
 ap.add_argument('--view', action='store_true', help="open the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
@@ -81,7 +85,7 @@ with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
     f.write(f"% kicad2ant: this run's settings. In Octave, run this file to run it again.\n"
             f"% dry_run=1 builds the model only; skip_fdtd=1 redoes only the post-processing.\n"
             f"res='{'coarse' if a.mode == 'dry' else a.mode}'; dry_run={int(a.mode == 'dry')}; skip_fdtd={int(a.post)};\n"
-            f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}];\nrun_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"
+            f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}]; case_box=[{' '.join('%g' % v for v in a.case or [])}];\nrun_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"
             f"run(fullfile(run_dir, 'antenna_sim.m'))\n")
 script = f"run('{q(os.path.join(out, 'run_sim.m'))}')"
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display

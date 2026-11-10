@@ -14,7 +14,8 @@ except ImportError:   # loaded as a plain module (development)
 
 PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
-DEFAULTS = {'mode': 'fast', 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False}
+DEFAULTS = {'mode': 'fast', 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False,
+            'case': False, 'case_vals': [d for _, d in core.CASE_FIELDS]}
 LABELS = {'dry': 'Check model (seconds)', 'fast': 'Fast: S11 only (about a minute)',
           'coarse': 'Coarse: S11, gain, pattern (minutes)', 'fine': 'Fine: final numbers (much longer)'}
 MODES = [(LABELS[m], m) for m, _ in core.MODES]   # (label, mode) in list order
@@ -25,7 +26,7 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.1.0'   # build_pcm.py checks it against metadata.json
+VERSION = '0.2.0'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
@@ -160,6 +161,23 @@ class Kicad2antDialog(wx.Dialog):
         feed_row.Add(use_sel, 0, wx.LEFT, 6)
         feed_row.Add(auto, 0, wx.LEFT, 4)
 
+        self.case_ctl = wx.Choice(run, choices=['Air (bare board)', 'Plastic case'])
+        self.case_ctl.SetSelection(1 if s['case'] else 0)
+        self.case_ctl.SetToolTip('Plastic case: a box shell around the board, with the wall thickness and the gaps '
+                                 'to the board at the sides, on top (F.Cu side) and below, in mm. '
+                                 'ABS about 3.0 / 0.01, PC 2.9 / 0.01, nylon 3.2-3.8 / 0.02. Plastic lowers the resonance.')
+        vals = s['case_vals'] if len(s['case_vals']) == 6 else [d for _, d in core.CASE_FIELDS]
+        self.case_vals = [wx.TextCtrl(run, value=str(v), size=(45, -1)) for v in vals]
+        case_row = wx.BoxSizer(wx.HORIZONTAL)
+        case_row.Add(wx.StaticText(run, label='Around the board:'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        case_row.Add(self.case_ctl, 0, wx.RIGHT, 8)
+        for (label, _), c in zip(core.CASE_FIELDS, self.case_vals):
+            case_row.Add(wx.StaticText(run, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 3)
+            case_row.Add(c, 0, wx.RIGHT, 6)
+        case_row.Add(wx.StaticText(run, label='mm'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.case_ctl.Bind(wx.EVT_CHOICE, lambda e: self.enable_case())
+        self.enable_case()
+
         self.octave = wx.TextCtrl(run, value=s['octave'])
         self.octave.SetToolTip('Leave empty to find Octave by itself. Set it if the run says Octave was not found.')
         browse = wx.Button(run, label='...', size=(30, -1))
@@ -262,6 +280,7 @@ class Kicad2antDialog(wx.Dialog):
         root.Add(grid, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         root.Add(self.mode_help, 0, wx.ALL, 10)
         root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(case_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(oct_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(ems_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(out_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
@@ -295,7 +314,12 @@ class Kicad2antDialog(wx.Dialog):
                 'hi': self.hi.GetValue().strip(), 'octave': self.octave.GetValue().strip(),
                 'openems': self.openems.GetValue().strip(), 'theme': self.theme_ctl.GetSelection(),
                 'outdir': self.outdir.GetValue().strip(), 'view': self.view.GetValue(),
+                'case': self.case_ctl.GetSelection() == 1, 'case_vals': [c.GetValue().strip() for c in self.case_vals],
                 'size': None if self.IsMaximized() else list(self.GetSize())}
+
+    def enable_case(self):
+        for c in self.case_vals:
+            c.Enable(self.case_ctl.GetSelection() == 1)
 
     def apply_theme(self):
         """System leaves every colour to KiCad / the OS; Light and Dark set them on the window and its controls."""
@@ -391,6 +415,13 @@ class Kicad2antDialog(wx.Dialog):
         except ValueError:
             wx.MessageBox('f0 must be a frequency in MHz. The band needs both ends (from below to), or none.', TITLE)
             return
+        case = ()
+        if self.case_ctl.GetSelection() == 1:
+            try:
+                case = core.case_args(c.GetValue().strip() for c in self.case_vals)
+            except ValueError:
+                wx.MessageBox('Plastic case: εr is 1 or more, the wall more than 0 mm, tanδ and the gaps 0 or more.', TITLE)
+                return
         python = core.find_python()
         if not python:
             wx.MessageBox('Python 3 was not found: install it from python.org.', TITLE, wx.ICON_WARNING)
@@ -419,7 +450,7 @@ class Kicad2antDialog(wx.Dialog):
             self.set_feed(None)
         ref, num = self.feed if self.feed else ('auto', '')
         cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip(),
-                             self.view.GetValue())
+                             self.view.GetValue(), case)
         self.out, self.mode, self.started = out, mode, time.time()
         self.log_pos, self.log_rest, self.best, self.stopped = 0, '', 0.0, False
         self.log.Clear()

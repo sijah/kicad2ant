@@ -18,7 +18,7 @@ ENERGY = re.compile(r"Timestep:\s*(\d+).*?\(\s*-\s*([\d.]+)\s*dB\)")
 PHASES = (('antenna footprint:', 'Reading the board'), ('Create FDTD operator', 'Meshing'),
           ('Running FDTD engine', 'Simulating'), ('openEMS running', 'Simulating'),
           ('Time for ', 'Post-processing'), ('nf2ff', 'Post-processing'))
-SUMMARY = ('fast (', 'resonance','min S11', 'S11 < -10', 'no -10 dB band', 'at ', 'run:')
+SUMMARY = ('case:', 'fast (', 'resonance','min S11', 'S11 < -10', 'no -10 dB band', 'at ', 'run:')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
@@ -55,7 +55,19 @@ def run_dir(board_path, env=os.environ, base=''):
     return os.path.join(home, 'kicad2ant', stem.replace(' ', '_') + '_' + tag)
 
 
-def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd='', view=False):
+CASE_FIELDS = (('εr', '3.0'), ('tanδ', '0.01'), ('wall', '2'), ('gap side', '1'), ('top', '1'), ('bottom', '1'))   # ABS
+
+
+def case_args(values):
+    """The --case numbers from the plastic case fields (epsR, tanD, wall, gap side, top, bottom, mm).
+    ValueError unless epsR >= 1, wall > 0 and the others >= 0."""
+    v = [float(x) for x in values]
+    if len(v) != 6 or not v[0] >= 1 or not v[2] > 0 or not min(v[1:]) >= 0:
+        raise ValueError(values)
+    return ['%g' % x for x in v]
+
+
+def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd='', view=False, case=()):
     cmd = [python, script, board_copy, ref or 'auto', '--mode', mode, '--out', out]
     if feed:
         cmd += ['--feed', feed]
@@ -65,6 +77,8 @@ def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='',
         cmd += ['--band', band[0], band[1]]
     if gnd:
         cmd += ['--gnd', gnd]
+    if case:   # plastic case: epsR, tanD, wall, gap side, top, bottom
+        cmd += ['--case'] + list(case)
     if view:
         cmd.append('--view')
     return cmd

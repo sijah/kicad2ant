@@ -203,6 +203,7 @@ On Windows you can also drop a `.kicad_pcb` onto `scripts/kicad2ant.bat` for a f
 | `--f0 MHz`, `--band LO HI` | 2440 and 2400–2483.5. For any other f0 the band is f0 ± 2 % |
 | `--feed PAD` | pad `1` of the antenna footprint |
 | `--gnd NET` | detected, see below |
+| `--case ER TAND WALL SIDE TOP BOTTOM` | none: the board in air. A plastic case as a box shell around the board: εr, loss tangent, wall thickness and the gaps to the board at the sides, on top (F.Cu side) and below, mm; e.g. `--case 3 0.01 2 1 1 1` for ABS. In the plugin: **Around the board: Plastic case** |
 | `--out DIR` | `myboard_kicad2ant/` next to the board. No spaces in the path |
 | `--post` | redo only the post-processing on saved fields, e.g. after adding `measured.s1p` |
 | `--view` | open the 3D model in AppCSXCAD when the run finishes |
@@ -238,7 +239,11 @@ Everything lands in `<run folder>/results/`:
 | `<REF>_<mode>_pattern.vtk` | 3D pattern for ParaView (not in Fast) |
 
 To compare against a measurement, save your VNA's 1-port file as `measured.s1p` in the run folder and rerun
-with `--post`. It's drawn over the S11 and Smith plots.
+with `--post`. It's drawn over the S11 and Smith plots. More files named `measured1.s1p`, `measured2.s1p`, …
+are drawn too, each in its own colour with its name in the legend, and the summary gives each one's
+resonance and its distance from the simulation. Antenna versions are compared by themselves: each run first
+keeps the result it replaces in `history/<REF>_<mode>_<date-time>.s1p`, and the last two of these are drawn
+the same way. To keep an older one in the plots, copy it from `history/` to `measured1.s1p`.
 
 Reading the result: if resonance is away from f0, the antenna is the wrong length and needs retuning. If it
 resonates at f0 but S11 is poor, it needs a matching network, which you can design from the `.s1p`.
@@ -247,8 +252,9 @@ resonates at f0 but S11 is poor, it needs a matching network, which you can desi
 
 Mention these whenever you share a result.
 
-- Only the antenna footprint and the ground net are modelled. Other nets, components and any enclosure are
-  left out. The board sits bare in air.
+- Only the antenna footprint and the ground net are modelled. Other nets and components are left out. The board
+  is in air, or in a plain box-shaped plastic case (`--case`); ribs, bosses, screws and curved walls are not
+  modelled. Plastic lowers the resonance, by several % when it is close to the antenna, so tune with the case on.
 - The matching network and feed line aren't modelled. S11 is at the feed pad.
 - Copper is lossless, so radiation efficiency only includes dielectric loss.
 - Chip antennas can't be modelled, since they're a component and not copper.

@@ -15,6 +15,7 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
 | `REF` | the one AE*/ANT* / RF_Antenna footprint (error lists candidates if not exactly one) |
 | `--mode dry\|fast\|coarse\|fine` | `fast` (S11 / Zin / -10 dB band only, no far field) |
 | `--f0 MHz`, `--band LO HI` | 2440, 2400..2483.5; another f0 -> band f0 -/+ 2 % |
+| `--case ER TAND WALL SIDE TOP BOTTOM` | none (board in air); plastic box shell: εr, tanδ, wall, gaps side / top (F.Cu) / bottom, mm |
 | `--feed PAD`, `--gnd NET` | pad 1; the net of pad 2, else GND, else the largest ground-named zone net (printed as `ground net: ...`) |
 | `--out DIR` | `BOARD_kicad2ant` (no spaces) |
 | `--post` | post-processing only, on saved fields (refuses if the board / parameters / mesh changed) |
@@ -25,7 +26,7 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
    Physical Stackup (else 2-layer FR4 4.5, with a warning). The extractor stops naming what is missing.
 2. **Ask the user** (together, once): design frequency and target band; the antenna reference if
    the board has several; feed pad / ground net if not pad 1 / pad 2's net; enclosure or bare board
-   (only bare is modelled).
+   (a box-shaped plastic case is modelled with `--case`: ask its material, wall and gaps; tune with it on).
 3. **Dry run:** `--mode dry`, then show `results/<REF>_geometry.png` (each copper layer, whole board
    and zoomed: GND grey, antenna orange, port magenta, PEC lines blue). Check the port is on the
    feed and the ground is where the user expects.
@@ -33,8 +34,9 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
    resonance about 1-2 % below coarse) to see where it resonates; coarse (0.5 mm at the antenna, -40 dB end; a 30x36 mm 2-layer IFA board is
    0.4 Mcells, ~10 min) in the background; fine (0.2 mm, -50 dB) for numbers to quote; it needs
    several GB of RAM on large boards. If the system kills a run for memory, report it, do not restart.
-5. **Measured data:** a VNA 1-port file saved as `BOARD_kicad2ant/measured.s1p` is overlaid on the
-   S11 and Smith plots and its resonance compared in the summary; rerun with `--post`.
+5. **Measured data:** every `BOARD_kicad2ant/measured*.s1p` (`measured.s1p`, `measured1.s1p`, ...) is
+   overlaid on the S11 and Smith plots, each in its own colour, and its resonance compared in the summary;
+   rerun with `--post`. Earlier runs are kept in `history/` and the last two of the same mode are overlaid by themselves.
 6. **Report** from `results/<REF>_<mode>_summary.txt`, show `_s11_zin.png`, `_smith.png`,
    `_pattern.png`: resonance and min S11 (a minimum at the sweep edge is flagged), the -10 dB band
    vs the target, Zin at f0, reactance zero crossings, the run line (converged? mesh neighbour
@@ -63,11 +65,16 @@ Each shape change needs a new FDTD run (`--post` only redraws the same shape). K
    `KPY <skill>/scripts/fp_tools.py refill BOARD_try1/board.kicad_pcb`
    If a moved short-pin pad no longer touches GND copper after the refill, the variant is not
    connected: say so, do not run it.
-4. **Run it into its own folder,** with the baseline's `REF`, `--f0`, `--band`, `--feed`, `--gnd` and mode:
+4. **Run it into its own folder,** with the baseline's `REF`, `--f0`, `--band`, `--feed`, `--gnd`, `--case` and mode:
    `--out BOARD_try1_kicad2ant --mode dry` first and show the geometry picture, then the run.
    Use `--mode fast` for each variant (under a minute on a small board): it gives the resonance shift.
    One variant at a time, not in parallel; two runs in one run folder are refused.
 5. **Compare** with the baseline run in the same mode: resonance, S11 at f0, -10 dB band against the target.
+   **Predict the next length, do not guess it.** Resonance goes nearly as 1/length, so with two runs of
+   the resonant path length L1, L2 (feed to open tip, in mm) resonating at f1, f2, the length for f0 is
+   `L = L1 + (1/f0 - 1/f1) * (L2 - L1) / (1/f2 - 1/f1)` (the two runs nearest f0; from the baseline alone,
+   `L = L1 * f1 / f0`, a first step only). Change only that length for it: the overall width and height
+   of the antenna stay, else the shift mixes two effects. Usually the third run lands within ~1 %.
 6. **Coarse** for the variant the user picks (adds gain and pattern), **fine** for numbers to quote.
 
 Do not edit `antenna_geom.m` to make a variant: it also holds the mesh lines snapped to the old copper
@@ -80,8 +87,10 @@ The source of truth is the variant's footprint in `BOARD_tryN/board.kicad_pcb` (
 the library file.
 
 1. **Footprint file.** Let KiCad write it from the simulated board copy, do not convert it by hand:
-   `KPY <skill>/scripts/fp_tools.py save-footprint BOARD_tryN/board.kicad_pcb REF LIB.pretty NAME`
-   (unplaced, unrotated, pads without nets; front-side footprints only). Which `LIB.pretty` and `NAME`:
+   `KPY <skill>/scripts/fp_tools.py save-footprint BOARD_tryN/board.kicad_pcb REF LIB.pretty NAME "NOTE"`
+   (unplaced, unrotated, pads without nets; front-side footprints only). NOTE goes into the footprint's
+   description: the kicad2ant version, mode, resonance and f0, and the run folder, e.g.
+   `"kicad2ant 0.2.0 fast: resonance 2438 MHz for f0 2440, run BOARD_try3_kicad2ant"`. Which `LIB.pretty` and `NAME`:
    find REF's library id, `(footprint "Lib:Name"` in the board.
    - `Lib` is a project library (the user's own): back up `Name.kicad_mod` as `Name_orig.kicad_mod`, then
      save over `Name`. The id is unchanged, so step 2 works.
@@ -104,8 +113,8 @@ the library file.
 
 ## Limits to state with every result
 
-- Only the antenna footprint and the GND net are modelled: other nets, components and any
-  enclosure are not. Bare board in air.
+- Only the antenna footprint and the GND net are modelled: other nets and components are not.
+  The board is in air, or in a box-shaped plastic case (`--case`); real case details are not.
 - Copper is lossless (PEC): radiation efficiency counts dielectric loss only.
 - Lumped port at the feed pad, not de-embedded: S11 is at the pad, without matching network and
   feed line. Chip antennas (a component, not copper) cannot be modelled.

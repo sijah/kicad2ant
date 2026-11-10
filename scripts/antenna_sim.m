@@ -3,7 +3,7 @@
 % footprint's copper, the GND net's zone fills, tracks and vias, the stackup, the outline, the feed port)
 % into the run folder and sets the variables below.
 % Model: one dielectric per copper pair, copper as PEC sheets, GND vias / plated holes as PEC lines,
-% 50 ohm lumped port at the feed pad, board in air, PML_8 on all sides.  Other nets' copper and the
+% 50 ohm lumped port at the feed pad, board in air or in a box-shaped plastic case (case_box), PML_8 on all sides.  Other nets' copper and the
 % parts are not modelled.
 % kicad2ant.py copies this file into the run folder next to antenna_geom.m and writes run_sim.m there
 % with the run's settings: run('<run folder>/run_sim.m') in Octave runs it again. By hand:
@@ -18,6 +18,9 @@ if ~exist('run_dir', 'var'), run_dir = pwd; end     % holds antenna_geom.m; sim_
 if ~exist('f0', 'var'), f0 = 2.44e9; end            % design frequency (Hz)
 if ~exist('fc', 'var'), fc = 0.4 * f0; end          % reported band f0 -/+ fc
 if ~exist('band_t', 'var'), band_t = [2400 2483.5] * 1e6; end   % target band: marked on plots, checked in the summary
+% plastic case: a box shell around the board [epsR tanD wall gap_side gap_top gap_bottom], mm, top = the F.Cu side;
+% [] = the bare board in air
+if ~exist('case_box', 'var'), case_box = []; end
 here = run_dir;
 assert(isempty(strfind(here, ' ')), 'the run folder path has a space (%s): nf2ff.exe is run unquoted, use another', here);
 % openEMS v0.37+ in a path WITHOUT spaces; its matlab folder must hold h5*_octave.oct built for this
@@ -70,20 +73,39 @@ for k = 1:numel(geom.ant), CSX = AddPolygon(CSX, 'ant', 10, 2, geom.ant{k}.z, ge
 for k = 1:size(geom.lines, 1)      % GND vias and plated antenna holes: PEC lines
   L = geom.lines(k, :); CSX = AddBox(CSX, 'gnd', 10, [L(1:2) L(3)], [L(1:2) L(4)]);
 end
+o = geom.outline; bb = [min(o, [], 1) max(o, [], 1)];
+co = [bb(1:2) 0 bb(3:4) zmax];     % what the air is measured from: the board, or the case's outside
+if ~isempty(case_box)              % six plastic walls, below the board's priority (a gap of 0 touches it)
+  assert(numel(case_box) == 6 && case_box(1) >= 1 && all(case_box(2:6) >= 0) && case_box(3) > 0, ...
+         'case_box: [epsR tanD wall gap_side gap_top gap_bottom], epsR >= 1, wall > 0, the rest >= 0');
+  w = case_box(3); ci = [bb(1:2) - case_box(4), -case_box(6), bb(3:4) + case_box(4), zmax + case_box(5)];
+  co = ci + [-w -w -w w w w];
+  CSX = AddMaterial(CSX, 'case');
+  CSX = SetMaterialProperty(CSX, 'case', 'Epsilon', case_box(1), 'Kappa', case_box(2) * 2*pi*f0 * EPS0 * case_box(1));
+  for a = 1:3
+    hi = co(4:6); hi(a) = ci(a); CSX = AddBox(CSX, 'case', 0, co(1:3), hi);
+    lo = co(1:3); lo(a) = ci(a+3); CSX = AddBox(CSX, 'case', 0, lo, co(4:6));
+  end
+end
 [CSX, port] = AddLumpedPort(CSX, 5, 1, 50, geom.port(1:3), geom.port(4:6), geom.port_dir, true);
 
 %% mesh: thirds rule on straight antenna edges, port planes kept exactly, other lines merged
 % within cell_ant/2 of a kept one, graded to lambda/air_div, 8 PML cells outside the air
 lam = c0 / (f_ex + fc_ex) / unit;                  % shortest excited wavelength (mm)
 d_sub = lam / sqrt(max(geom.diel(:, 3))) / air_div; % largest cell inside the board
-o = geom.outline; bb = [min(o, [], 1) max(o, [], 1)];
+cl = {[], [], []}; gb = [bb(1:2) 0 bb(3:4)]; dg = d_sub;   % the dielectric grid: over the board, or over the whole case
+if ~isempty(case_box)              % one grid, not a second one interleaved with the board's (7x the cells)
+  for a = 1:3, cl{a} = [co(a), ci(a), ci(a+3), co(a+3)]; end   % both faces of each wall
+  gb = co; dg = min(d_sub, lam / sqrt(case_box(1)) / air_div);
+end
 fine = [geom.ant_box(1:2) - 3, geom.ant_box(3:4) + 3];
 axn = 'xy';
 for a = 1:2
   e = geom.(['edge_' axn(a)]);
   if fast, pri = [geom.port([a a+3]), e(:, 1)'];   % lines on the copper edges themselves
+    g = ['port_gnd_' axn(a)]; if isfield(geom, g), pri = [pri, geom.(g)]; end   % and on the ground around the feed: keeps the clearance open
   else, pri = [geom.port([a a+3]), e(:, 1)' + e(:, 2)' * cell_ant/3, e(:, 1)' - e(:, 2)' * 2*cell_ant/3]; end
-  low = [geom.(['mesh_' axn(a)]), fine(a):cell_ant:fine(a+2), bb(a):d_sub:bb(a+2), bb(a), bb(a+2), bb(a) - air, bb(a+2) + air];
+  low = [geom.(['mesh_' axn(a)]), fine(a):cell_ant:fine(a+2), gb(a):dg:gb(a+3), bb(a), bb(a+2), cl{a}, co(a) - air, co(a+3) + air];
   for pass = 1:2                   % before and after smoothing
     p = sort(pri); keep = p(1);
     for t = p(2:end), if t - keep(end) > cell_ant/3, keep(end+1) = t; end, end
@@ -94,7 +116,7 @@ for a = 1:2
     if pass == 1, low = SmoothMeshLines(out, lam / air_div, 1.4); end
   end
 end
-zl = unique([geom.cu_z, geom.diel(:, 1)', geom.diel(:, 2)', -air, zmax + air]);
+zl = unique([geom.cu_z, geom.diel(:, 1)', geom.diel(:, 2)', cl{3}, co(3) - air, co(6) + air]);
 for k = 1:size(geom.diel, 1)
   d = geom.diel(k, :); zl = [zl, linspace(d(1), d(2), max(nz, ceil((d(2) - d(1)) / cell_ant)) + 1)];
 end
@@ -116,6 +138,7 @@ for r = 1:2, for k = 1:nl
   subplot(2, nl, (r-1)*nl + k); hold on; axis equal; box on;
   title(sprintf('%s z=%.3f', geom.cu_name{k}, geom.cu_z(k)), 'interpreter', 'none');
   plot(o([1:end 1], 1), o([1:end 1], 2), 'k');
+  if ~isempty(case_box) && r == 1, for c = {co, ci}, plot(c{1}([1 4 4 1 1]), c{1}([2 2 5 5 2]), 'c--'); end, end
   for j = 1:numel(geom.holes), hh = geom.holes{j}; plot(hh([1:end 1], 1), hh([1:end 1], 2), 'k'); end
   for j = 1:numel(geom.gnd), g = geom.gnd{j}; if strcmp(g.layer, geom.cu_name{k}), fill(g.pts(:,1), g.pts(:,2), [.75 .75 .75], 'edgecolor', 'none'); end, end
   for j = 1:numel(geom.ant), g = geom.ant{j}; if strcmp(g.layer, geom.cu_name{k}), fill(g.pts(:,1), g.pts(:,2), [.85 .35 .1], 'edgecolor', 'none'); end, end
@@ -133,6 +156,13 @@ Sim_Path = fullfile(here, ['sim_' res]); Sim_CSX = 'antenna.xml';
 P = struct('geom', geom, 'f0', f0, 'fc', fc, 'f_ex', f_ex, 'fc_ex', fc_ex, 'mesh', mesh, 'end_crit', end_crit);
 pfile = fullfile(Sim_Path, 'params.mat');
 files = {fullfile(out, [name '_' res '_summary.txt']), fullfile(out, [name '_' res '.s1p'])};
+old = dir(files{2});   % keep the result this run replaces in history/, named by when it was made, for the overlay
+if ~skip_fdtd && ~dry_run && ~isempty(old) && old.bytes > 0
+  [~,~] = mkdir(fullfile(here, 'history'));
+  % not copyfile: on Windows it runs xcopy, which asks "file or directory?" and hangs with no console
+  fid = fopen(fullfile(here, 'history', [name '_' res '_' datestr(old.datenum, 'yyyymmdd-HHMMSS') '.s1p']), 'w');
+  fwrite(fid, fileread(files{2})); fclose(fid);
+end
 for k = 1:2, fid = fopen(files{k}, 'a'); assert(fid > 0, 'cannot write %s (open in another program?)', files{k}); fclose(fid); end
 t_run = 0;
 if dry_run
@@ -163,9 +193,16 @@ if isnan(n_ts), conv = 'unknown (no openEMS.log)';
 elseif n_ts >= nrts, conv = sprintf('NOT CONVERGED: hit the %d step limit before the end criterion; results unreliable', nrts);
 else, conv = sprintf('converged in %d steps', n_ts); end
 
-% measured S11 from a VNA, if the run folder holds measured.s1p (Touchstone, any unit / RI / MA / DB, 50 ohm)
-meas = fullfile(here, 'measured.s1p'); have_meas = exist(meas, 'file') == 2;
-if have_meas
+% measured S11 from a VNA (or an earlier run's .s1p): every measured*.s1p in the run folder, in number order
+% (measured.s1p, measured1.s1p, measured2.s1p ...); Touchstone, any unit / RI / MA / DB, 50 ohm
+mf = {dir(fullfile(here, 'measured*.s1p')).name};
+[~, o] = sort(max(0, str2double(regexprep(mf, '^measured|\.s1p$', '')))); mf = mf(o);   % no number = 0, then 1, 2 .. 10
+hf = sort({dir(fullfile(here, 'history', [name '_' res '_*.s1p'])).name});
+mf = [mf, cellfun(@(f) ['history/' f], hf(max(1, end-1):end), 'uniformoutput', false)];   % + the last 2 earlier runs
+M = {}; have_meas = ~isempty(mf);
+mcol = [0 .6 0; .9 .45 0; .6 0 .75; 0 .6 .7; .55 .55 0; .9 0 .45];   % measured curves, cycled
+for q = 1:numel(mf)
+  meas = fullfile(here, mf{q});
   opt = 'GHZ S MA R 50'; num = {};  % the Touchstone default when there is no # line
   for l = strsplit(fileread(meas), {"\r\n", "\n"})
     s = strtrim(regexprep(l{1}, '!.*', ''));
@@ -181,6 +218,7 @@ if have_meas
   elseif any(strcmp(tok, 'DB')), sm = 10.^(a/20) .* exp(1j*b*pi/180);
   else, sm = a .* exp(1j*b*pi/180); end
   [sm_min, im] = min(20*log10(abs(sm)));
+  M{end+1} = struct('name', mf{q}, 'f', fm, 's', sm, 'min', sm_min, 'fmin', fm(im), 'c', mcol(mod(q - 1, rows(mcol)) + 1, :));
 end
 
 %% results: match
@@ -188,7 +226,20 @@ freq = linspace(f0 - fc, f0 + fc, 801);
 port = calcPort(port, Sim_Path, freq);
 s11 = port.uf.ref ./ port.uf.inc; Zin = port.uf.tot ./ port.if.tot;
 s11dB = 20*log10(abs(s11));
-[s_min, i_min] = min(s11dB); f_res = freq(i_min);
+% the resonance is the dip nearest f0, not the sweep's deepest point (a higher mode or the feed can be deeper):
+% a -10 dB dip nearest f0, else a dip standing >= 1 dB out of its shoulders nearest f0, else the deepest point
+im = find(s11dB(2:end-1) <= s11dB(1:end-2) & s11dB(2:end-1) < s11dB(3:end)) + 1;
+pick = im(s11dB(im) <= -10);
+if isempty(pick)
+  for i = im
+    l = i; while l > 1 && s11dB(l-1) >= s11dB(l), l = l - 1; end
+    r = i; while r < numel(s11dB) && s11dB(r+1) >= s11dB(r), r = r + 1; end
+    if min(s11dB(l), s11dB(r)) - s11dB(i) >= 1, pick(end+1) = i; end
+  end
+end
+if isempty(pick), [~, i_min] = min(s11dB);
+else, [~, k] = min(abs(freq(pick) - f0)); i_min = pick(k); end
+s_min = s11dB(i_min); f_res = freq(i_min);
 at_edge = i_min == 1 || i_min == numel(freq);
 lo = i_min; hi = i_min;            % the -10 dB band is the stretch around the minimum only
 while lo > 1 && s11dB(lo-1) < -10, lo = lo - 1; end
@@ -220,6 +271,8 @@ for fd = [1 fid]
   fprintf(fd, '%s %s run (%.0f s, %d x %d x %d cells, smallest %.3f mm)\n', name, res, t_run, numel(mesh.x), numel(mesh.y), numel(mesh.z), dmin);
   fprintf(fd, 'board: %d copper layers, %.3f mm, epsR %s; ground %s; port %s\n', numel(geom.cu_z), zmax, ...
           mat2str(round(geom.diel(:, 3)' * 100) / 100), geom.gnd_net, geom.port_kind);
+  if isempty(case_box), fprintf(fd, 'case: none, the board in air\n');
+  else, fprintf(fd, 'case: plastic epsR %.3g tanD %.3g, wall %.3g mm, gap side %.3g top %.3g bottom %.3g mm\n', case_box); end
   if fast, fprintf(fd, 'fast (S11 only, no far field): confirm with coarse\n'); end
   if at_edge
     fprintf(fd, 'min S11 %.1f dB at %.0f MHz = SWEEP EDGE: no resonance in %.0f..%.0f MHz (retune, or widen fc)\n', s_min, f_res/1e6, freq(1)/1e6, freq(end)/1e6);
@@ -235,8 +288,8 @@ for fd = [1 fid]
   fprintf(fd, 'reactance crosses zero at: %s MHz\n', mat2str(round(f_x/1e6)));
   rnote = ''; if rmax > 2, rnote = ' (above 2: abrupt cell jump, check the fine run agrees)'; end
   fprintf(fd, 'run: %s; mesh worst neighbour ratio %.2f%s\n', conv, rmax, rnote);
-  if have_meas
-    fprintf(fd, 'measured (measured.s1p): min S11 %.1f dB at %.0f MHz, %+.0f MHz from the simulation\n', sm_min, fm(im)/1e6, (fm(im) - f_res)/1e6);
+  for q = 1:numel(M)
+    fprintf(fd, '%s: min S11 %.1f dB at %.0f MHz, %+.0f MHz from the simulation\n', M{q}.name, M{q}.min, M{q}.fmin/1e6, (M{q}.fmin - f_res)/1e6);
   end
   if fast, continue; end
   fprintf(fd, '   f MHz  S11 dB   D dBi  rad eff %%  gain dBi  realized gain dBi\n');
@@ -266,14 +319,15 @@ subplot(2,1,1); hold on;
 patch(band_t([1 2 2 1])/1e6, [ylo ylo 0 0], [.85 .92 1], 'edgecolor', 'none');
 plot(xr, [-10 -10], 'r--', 'linewidth', 1);
 if s_min < -10, plot([freq(lo) freq(lo); freq(hi) freq(hi)]'/1e6, [ylo 0], 'r:', 'linewidth', 1); end
-plot(freq/1e6, s11dB, 'k');
-if have_meas, plot(fm/1e6, 20*log10(abs(sm)), 'color', [0 .6 0]); end
+hs = plot(freq/1e6, s11dB, 'k'); hm = [];
+for q = 1:numel(M), hm(end+1) = plot(M{q}.f/1e6, 20*log10(abs(M{q}.s)), 'color', M{q}.c); end
 if ~at_edge
   plot(f_res/1e6, s_min, 'o', 'color', 'k', 'markerfacecolor', 'r', 'markersize', 8);
   text(f_res/1e6, s_min, sprintf('  %.0f MHz, %.1f dB', f_res/1e6, s_min), 'verticalalignment', 'top');
 end
+if have_meas, legend([hs hm], [{'simulation'}, cellfun(@(m) m.name, M, 'uniformoutput', false)], 'location', 'southeast', 'interpreter', 'none'); end
 grid on; box on; ylabel('|S11| (dB)'); ylim([ylo 0]); xlim(xr);
-title(sprintf('%s %s: S11 (blue = target band, red = -10 dB%s)', name, res, repmat(', green = measured', 1, have_meas)));
+title(sprintf('%s %s: S11 (blue = target band, red = -10 dB)', name, res));
 subplot(2,1,2); plot(freq/1e6, real(Zin), 'b', freq/1e6, imag(Zin), 'r--'); hold on;
 k = freq >= xr(1)*1e6 & freq <= xr(2)*1e6; zr = [real(Zin(k)) imag(Zin(k))];
 grid on; box on; xlabel('MHz'); ylabel('Z_{in} (\Omega)'); xlim(xr); title('Z_{in}: blue = Re, red dashed = Im');
@@ -287,12 +341,15 @@ r = [0 logspace(-3, 4, 500)]; s = [-fliplr(r) r];
 for rr = [0 0.2 0.5 1 2 5], plot(real(G(rr + 1j*s)), imag(G(rr + 1j*s)), 'color', gc); end
 for xx = [-5 -2 -1 -0.5 -0.2 0.2 0.5 1 2 5], plot(real(G(r + 1j*xx)), imag(G(r + 1j*xx)), 'color', gc); end
 plot([-1 1], [0 0], 'color', gc);
-plot(real(s11), imag(s11), 'k', 'LineWidth', 1.5);
-if have_meas, k = fm >= freq(1) & fm <= freq(end); plot(real(sm(k)), imag(sm(k)), 'g', 'LineWidth', 1.2); end
+hs = plot(real(s11), imag(s11), 'k', 'LineWidth', 1.5); hm = [];
+for q = 1:numel(M)
+  k = M{q}.f >= freq(1) & M{q}.f <= freq(end); hm(end+1) = plot(real(M{q}.s(k)), imag(M{q}.s(k)), 'color', M{q}.c, 'LineWidth', 1.2);
+end
 plot(real(s11(i0)), imag(s11(i0)), 'ko', 'markerfacecolor', 'r');
 for bt = band_t, [~, k] = min(abs(freq - bt)); plot(real(s11(k)), imag(s11(k)), 'bs', 'markerfacecolor', 'b'); end
+if have_meas, legend([hs hm], [{'simulation'}, cellfun(@(m) m.name, M, 'uniformoutput', false)], 'location', 'southoutside', 'interpreter', 'none'); end
 title({sprintf('%s %s: S11 %.0f..%.0f MHz', name, res, freq(1)/1e6, freq(end)/1e6), ...
-       sprintf('red = %.0f MHz, blue = target band edges%s', f0/1e6, repmat(', green = measured', 1, have_meas))});
+       sprintf('red = %.0f MHz, blue = target band edges', f0/1e6)});
 print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r200');
 
 if fast, return; end

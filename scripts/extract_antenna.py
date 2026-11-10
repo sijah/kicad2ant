@@ -201,6 +201,24 @@ for p in kids(fp, 'pad'):
     if kind == 'thru_hole' and len(Ls) > 1:
         x, y = PT(0, 0); zs = [cu_z[L] for L in Ls]; lines.append((x, y, min(zs), max(zs)))
     pads.append(dict(n=p[1], net=netname(p), layers=Ls, ring=rings[0], c=PT(0, 0)))
+def simple(ring):
+    """split a ring at repeated vertices (KiCad keyholes around drills, zero-width spikes) into simple loops;
+    keep the copper loops, drop zero-area spikes and opposite-winding holes, which AddPolygon cannot fill"""
+    sarea = lambda r: sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1])) / 2
+    key = lambda p: (round(p[0], 6), round(p[1], 6))
+    loops, st, seen = [], [], {}
+    for p in ring + ring[:1]:
+        k = key(p)
+        if k in seen:
+            i = seen[k]; loops.append(st[i:])
+            for q in st[i + 1:]: seen.pop(key(q))
+            del st[i + 1:]
+        else: seen[k] = len(st); st.append(p)
+    loops = [(sarea(r), r) for r in loops if len(r) > 2 and abs(sarea(r)) > 1e-9]
+    if len(loops) < 2: return [r for _, r in loops] or [ring]
+    big = max(loops, key=lambda s: abs(s[0]))[0]
+    return [r for s, r in loops if s * big > 0]   # shortcut: holes are filled (drill-sized in footprints), model them if a slotted antenna needs it
+ant = [(L, s) for L, r in ant for s in simple(r)]
 assert ant, f'{a.ref} has no copper on any copper layer'
 
 feeds = [q for q in pads if q['n'] == a.feed]
@@ -315,7 +333,18 @@ for L, r in ant:
             pt = lambda d: (a1 + d, m) if ax == 0 else (m, a1 + d)
             hi, lo = (any(inside(pt(d), q) for l, q in ant if l == L) for d in (1e-3, -1e-3))
             if hi != lo: edge[ax][round(a1, 4)] = 1 if hi else -1
-mx = sorted({round(p[0], 3) for p in hint}); my = sorted({round(p[1], 3) for p in hint})
+# straight ground edges within 1 mm of the port on the feed pad's layer: fast mode puts mesh lines on them, else
+# its edge-exact mesh merges the pad-to-ground clearance away and shorts the port (shortcut: a clearance under
+# cell_ant/3, ~0.17 mm, can still merge)
+near_port = lambda x, y: port[0] - 1 <= x <= port[3] + 1 and port[1] - 1 <= y <= port[4] + 1
+pgnd = (set(), set())
+for L, r in fills:
+    if L != fl: continue
+    for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]):
+        for ax, (a1, a2, b1, b2) in enumerate(((x1, x2, y1, y2), (y1, y2, x1, x2))):
+            m = (b1 + b2) / 2
+            if abs(a1 - a2) < 1e-4 and abs(b1 - b2) >= 0.05 and near_port(*((a1, m) if ax == 0 else (m, a1))): pgnd[ax].add(round(a1, 4))
+mx =sorted({round(p[0], 3) for p in hint}); my = sorted({round(p[1], 3) for p in hint})
 
 # ---- write ---------------------------------------------------------------------------------------
 M = lambda P: '[' + '; '.join(f'{x:.4f} {y:.4f}' for x, y in P) + ']'
@@ -336,5 +365,6 @@ with open(a.out, 'w', encoding='utf8', newline='\n') as o:
     for ax, k in enumerate('xy'):
         rows = '; '.join(f'{c:.4f} {sd}' for c, sd in sorted(edge[ax].items()))
         o.write(f'geom.edge_{k} = ' + (f'[{rows}]' if rows else 'zeros(0, 2)') + ';  % straight antenna edges: coordinate, metal side\n')
+        o.write(f'geom.port_gnd_{k} = {V(sorted(pgnd[ax]))};  % straight ground edges near the port (fast mode mesh lines)\n')
 print(f'{a.ref}: {len(ant)} antenna polygons, {len(fills)} {gnd} fills on {sorted({l for l, _ in fills}, key=order)}, '
       f'{len(lines)} PEC lines, {len(cu_z)} copper layers h {max(cu_z.values()):.3f} mm, {len(holes)} cutouts, port {pkind} -> {a.out}')
