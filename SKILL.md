@@ -13,7 +13,7 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
 | option | default |
 |---|---|
 | `REF` | the one AE*/ANT* / RF_Antenna footprint (error lists candidates if not exactly one) |
-| `--mode dry\|coarse\|fine` | `coarse` |
+| `--mode dry\|fast\|coarse\|fine` | `fast` (S11 / Zin / -10 dB band only, no far field) |
 | `--f0 MHz`, `--band LO HI` | 2440, 2400..2483.5; another f0 -> band f0 -/+ 2 % |
 | `--feed PAD`, `--gnd NET` | pad 1; the net of pad 2, else GND, else the largest ground-named zone net (printed as `ground net: ...`) |
 | `--out DIR` | `BOARD_kicad2ant` (no spaces) |
@@ -29,7 +29,8 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
 3. **Dry run:** `--mode dry`, then show `results/<REF>_geometry.png` (each copper layer, whole board
    and zoomed: GND grey, antenna orange, port magenta, PEC lines blue). Check the port is on the
    feed and the ground is where the user expects.
-4. **Coarse, then fine:** coarse (0.5 mm at the antenna, -40 dB end; a 30x36 mm 2-layer IFA board is
+4. **Fast, coarse, fine:** fast (no thirds rule, MUR, -30 dB, no far field; seconds to a minute,
+   resonance about 1-2 % below coarse) to see where it resonates; coarse (0.5 mm at the antenna, -40 dB end; a 30x36 mm 2-layer IFA board is
    0.4 Mcells, ~10 min) in the background; fine (0.2 mm, -50 dB) for numbers to quote; it needs
    several GB of RAM on large boards. If the system kills a run for memory, report it, do not restart.
 5. **Measured data:** a VNA 1-port file saved as `BOARD_kicad2ant/measured.s1p` is overlaid on the
@@ -64,9 +65,10 @@ Each shape change needs a new FDTD run (`--post` only redraws the same shape). K
    connected: say so, do not run it.
 4. **Run it into its own folder,** with the baseline's `REF`, `--f0`, `--band`, `--feed`, `--gnd` and mode:
    `--out BOARD_try1_kicad2ant --mode dry` first and show the geometry picture, then the run.
-   One variant at a time, not in parallel (a coarse run of a small 2-layer board is 10-20 min).
-5. **Compare** with the baseline: resonance, S11 at f0, -10 dB band against the target, gain.
-6. **Fine** only for the variant the user picks.
+   Use `--mode fast` for each variant (under a minute on a small board): it gives the resonance shift.
+   One variant at a time, not in parallel; two runs in one run folder are refused.
+5. **Compare** with the baseline run in the same mode: resonance, S11 at f0, -10 dB band against the target.
+6. **Coarse** for the variant the user picks (adds gain and pattern), **fine** for numbers to quote.
 
 Do not edit `antenna_geom.m` to make a variant: it also holds the mesh lines snapped to the old copper
 edges. Change the board copy and extract again.
@@ -108,4 +110,4 @@ the library file.
 - Lumped port at the feed pad, not de-embedded: S11 is at the pad, without matching network and
   feed line. Chip antennas (a component, not copper) cannot be modelled.
 - f0 below 100 MHz (NFC loops) is refused: not practical in FDTD.
-- Coarse is for trends; final tuning is on the real board with a VNA.
+- Fast and coarse are for trends; final tuning is on the real board with a VNA.

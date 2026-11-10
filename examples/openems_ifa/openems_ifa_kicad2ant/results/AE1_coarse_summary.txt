@@ -1,0 +1,20 @@
+AE1 coarse run (0 s, 143 x 109 x 40 cells, smallest 0.126 mm)
+board: 2 copper layers, 1.500 mm, epsR 4.3; ground GND; port in-plane on F.Cu to the GND copper at (0.50, 0.00)
+resonance (min S11) -28.2 dB at 2438 MHz
+S11 < -10 dB: 2325 .. 2570 MHz, covers the 2401.0..2499.0 MHz target
+at 2450 MHz: S11 -25.9 dB, Zin 52.1 +4.8j ohm
+reactance crosses zero at: [2075 2430] MHz
+run: converged in 13375 steps; mesh worst neighbour ratio 4.42 (above 2: abrupt cell jump, check the fine run agrees)
+   f MHz  S11 dB   D dBi  rad eff %  gain dBi  realized gain dBi
+    1470    -0.4    2.49       108      2.84              -7.90  (mismatched: rad eff is rough)
+    1666    -0.6    2.99        96      2.83              -6.09  (mismatched: rad eff is rough)
+    1862    -1.0    3.01       100      3.03              -3.78  (mismatched: rad eff is rough)
+    2058    -2.2    2.81        99      2.75              -1.27  (mismatched: rad eff is rough)
+    2254    -6.3    2.76       100      2.78               1.61
+    2438   -28.2    2.83        98      2.77               2.76  <- pattern
+    2450   -25.9    2.84        99      2.78               2.77
+    2646    -7.1    2.88       100      2.90               1.95
+    2842    -4.2    2.66        99      2.60               0.54
+    3038    -3.3    2.64       100      2.65              -0.12
+    3234    -3.0    2.59        99      2.53              -0.46
+    3430    -2.8    2.86       100      2.88              -0.31  (mismatched: rad eff is rough)

@@ -1,5 +1,27 @@
 # Changelog — kicad2ant
 
+## Unreleased
+
+### Added
+- **Fast mode, now the default** (plugin and `--mode fast`): S11, Zin, resonance and the −10 dB band
+  in seconds to a minute, for each tuning step. Rougher model (no thirds-rule lines, MUR, λ/8 air,
+  −30 dB) and no far field; the resonance comes out about 1–2 % below Coarse. Coarse and Fine are
+  unchanged.
+- The plugin explains the chosen mode in a line under the fields.
+- **Results tab** in the plugin: the summary and a Plot choice (S11 / Zin, Smith, Pattern, Model),
+  scaled to the window. Click a plot to open it full size. The window switches to it when a run ends.
+- **Copy log** and **Clear log** buttons.
+- Example `examples/openems_ifa/`: openEMS's own `inverted_f.m` antenna as a KiCad board.
+
+### Changed
+- S11 / Zin plot: zoomed to f0 ± 15 % (widened to the −10 dB band), target band shaded, resonance
+  and −10 dB edges marked, bigger text.
+- A saved plugin mode from 0.1.0 (a list index) keeps meaning the same mode.
+
+### Fixed
+- Two runs in the same run folder (the plugin and the command line, or two command lines) wrecked
+  each other's field dumps. The second one is now refused.
+
 ## v0.1.0 (2026-11-10)
 
 First public version. KiCad 10 (SWIG action plugin), status: testing.

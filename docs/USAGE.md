@@ -36,18 +36,19 @@ Physical Stackup. Without one, the board is taken as 2 layers of FR4 εr 4.5. Th
 
 ```
 python ../scripts/kicad2ant.py myboard.kicad_pcb --mode dry                 # check the model first
-python ../scripts/kicad2ant.py myboard.kicad_pcb                            # coarse run, minutes
+python ../scripts/kicad2ant.py myboard.kicad_pcb                            # fast: S11 only, under a minute
+python ../scripts/kicad2ant.py myboard.kicad_pcb --mode coarse              # adds gain and pattern, minutes
 python ../scripts/kicad2ant.py myboard.kicad_pcb --mode fine                # numbers you quote
 python ../scripts/kicad2ant.py myboard.kicad_pcb AE2 --f0 868 --band 863 870   # other antenna / band
 ```
 
-On Windows you can also drag the `.kicad_pcb` file onto `../scripts/kicad2ant.bat`. That runs a coarse
+On Windows you can also drag the `.kicad_pcb` file onto `../scripts/kicad2ant.bat`. That runs a fast
 2.4 GHz simulation.
 
 | option | default |
 |---|---|
 | `REF` | the one footprint whose reference is AE*/ANT* or whose library name contains "antenna" |
-| `--mode dry\|coarse\|fine` | `coarse`. `dry` builds the model and the geometry picture only |
+| `--mode dry\|fast\|coarse\|fine` | `fast`. `dry` builds the model and the geometry picture only; `fast` gives S11, Zin and the −10 dB band but no gain or pattern; `coarse` adds those; `fine` is the finer mesh |
 | `--f0 MHz`, `--band LO HI` | 2440 and 2400 to 2483.5 (2.4 GHz ISM). For another f0, the band defaults to f0 ± 2 % |
 | `--feed PAD` | pad `1` of the antenna footprint |
 | `--gnd NET` | the net of pad `2`, else `GND`, else the largest zone net with a ground name (`AGND`, `GNDA`, `VSS`, `0V`, ...). A name is matched exactly, then without its sheet path, then without case |
@@ -78,6 +79,8 @@ expect it.
     edge must be straight across from the pad (not diagonal), or the extractor stops.
 - The mesh follows the rule of thirds at straight antenna edges, uses 0.5 mm cells at the antenna
   (coarse) or 0.2 mm (fine), and grades smoothly to λ/15 or λ/20 in air.
+- Fast leaves out the thirds-rule lines, has λ/8 of air with MUR instead of λ/4 with PML_8, stops at
+  −30 dB and skips the far field. Its resonance comes out about 1–2 % below coarse.
 
 ## Limits: state them with every result
 
@@ -88,7 +91,7 @@ expect it.
 - Chip antennas can't be modelled: they are a part, not copper.
 - Below 100 MHz (NFC and other low-frequency loops) it refuses to run: the solver would need
   millions of steps.
-- Use coarse runs for trends. Do the final tuning on the real board with a VNA.
+- Use fast and coarse runs for trends. Do the final tuning on the real board with a VNA.
 
 ## Files
 

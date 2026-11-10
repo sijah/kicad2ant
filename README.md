@@ -104,14 +104,50 @@ and click the kicad2ant button. The window stays open next to the editor.
 1. Set **Mode** to *Check model* and click **Simulate**. A few seconds later you'll see the model, with the
    ground in grey, the antenna in orange and the port in magenta. Make sure the port is on the feed pad and the
    ground is where you expect. It's worth doing this every time.
-2. Switch to *Coarse* and simulate again. This takes minutes and is what you'll use while tuning.
-3. Use *Fine* for the numbers you report. It takes much longer and can use several GB of memory on a big board.
+2. Switch to *Fast* and simulate. It gives S11, Zin, the resonance and the −10 dB band in seconds to a
+   minute, so use it for every tuning step.
+3. Use *Coarse* to confirm the version you settled on. It adds gain, efficiency and the pattern, and takes minutes.
+4. Use *Fine* for the numbers you report. It takes much longer and can use several GB of memory on a big board.
+
+When a run ends the window switches to the **Results** tab: the summary, and a **Plot** list with S11 / Zin,
+Smith, Pattern and Model. Click a plot to open it full size.
+
+### Which mode?
+
+| Mode | What it does | Use it |
+|---|---|---|
+| Check model | builds the model and draws it, no simulation (seconds) | first, to see the port and the ground |
+| Fast | rougher model: S11, Zin, resonance and the −10 dB band, no gain or pattern | for each tuning step |
+| Coarse | also directivity, efficiency, gain and pattern | to confirm the version you chose |
+| Fine | finer mesh, runs to −50 dB (much longer, several GB) | for the numbers you report |
+
+Measured on the two example boards (one run at a time, Windows laptop):
+
+| Board | Fast | Coarse |
+|---|---|---|
+| `examples/ti_ifa` | 26 s, resonance 2391 MHz | 8 min, 2413 MHz |
+| `examples/openems_ifa` | 13 s, 2408 MHz | 3.5 min, 2438 MHz |
+
+Fast's resonance comes out about 1 % below Coarse.
+
+`examples/openems_ifa` is the antenna from openEMS's own `inverted_f.m` example, drawn as a KiCad board, so
+the two can be compared directly:
+
+| | openEMS `inverted_f.m` | kicad2ant Coarse | kicad2ant Fast |
+|---|---|---|---|
+| resonance | 2420 MHz, −29.8 dB | 2438 MHz (+0.7 %), −28.2 dB | 2408 MHz (−0.5 %), −21.1 dB |
+| Zin at 2450 MHz | 49.4 + 8.3j Ω | 52.1 + 4.8j Ω | 38.5 + 8.1j Ω |
+| directivity, radiation efficiency | 2.55 dBi, 99 % | 2.83 dBi, 98–99 % | not computed |
+
+Coarse lands within 1 % of openEMS's own model. Fast gets the resonance about right but the match and the
+impedance only roughly, which is why it's for tuning steps and not for the numbers you report. While tuning,
+compare Fast runs with Fast runs, then check the final version with Coarse.
 
 The fields:
 
 | Field | What it does | Default |
 |---|---|---|
-| Mode | Check model, Coarse or Fine | Coarse |
+| Mode | Check model, Fast, Coarse or Fine (see [Which mode?](#which-mode)) | Fast |
 | f0 (MHz) | design frequency | 2440 |
 | Band from / to (MHz) | your target band. The result tells you if the −10 dB band covers it | 2400–2483.5 at 2440 MHz, otherwise f0 ± 2 % |
 | Ground net | the board's ground net | detected, see [below](#how-it-finds-the-antenna-the-feed-and-the-ground) |
@@ -150,17 +186,18 @@ Fill the zones in KiCad (press **B**) and save first. Then:
 
 ```
 python scripts/kicad2ant.py myboard.kicad_pcb --mode dry                    # check the model first
-python scripts/kicad2ant.py myboard.kicad_pcb                               # coarse run, minutes
+python scripts/kicad2ant.py myboard.kicad_pcb                               # fast: S11 only, under a minute
+python scripts/kicad2ant.py myboard.kicad_pcb --mode coarse                 # adds gain and pattern, minutes
 python scripts/kicad2ant.py myboard.kicad_pcb --mode fine                   # numbers you report
 python scripts/kicad2ant.py myboard.kicad_pcb AE2 --f0 868 --band 863 870   # another antenna and band
 ```
 
-On Windows you can also drop a `.kicad_pcb` onto `scripts/kicad2ant.bat` for a coarse 2.4 GHz run.
+On Windows you can also drop a `.kicad_pcb` onto `scripts/kicad2ant.bat` for a fast 2.4 GHz run.
 
 | Option | Default |
 |---|---|
 | `REF` | the single footprint with an `AE*` / `ANT*` reference, or with "antenna" in its library name |
-| `--mode dry\|coarse\|fine` | `coarse`. `dry` only builds the model and its picture |
+| `--mode dry\|fast\|coarse\|fine` | `fast`. `dry` only builds the model and its picture |
 | `--f0 MHz`, `--band LO HI` | 2440 and 2400–2483.5. For any other f0 the band is f0 ± 2 % |
 | `--feed PAD` | pad `1` of the antenna footprint |
 | `--gnd NET` | detected, see below |
@@ -191,12 +228,12 @@ Everything lands in `<run folder>/results/`:
 | File | What it is |
 |---|---|
 | `<REF>_geometry.png` | the model, layer by layer. Look at this first |
-| `<REF>_<mode>_summary.txt` | resonance, −10 dB band vs. your target, Zin at f0, convergence, gain table |
-| `<REF>_<mode>_s11_zin.png` | S11 and input impedance vs. frequency |
+| `<REF>_<mode>_summary.txt` | resonance, −10 dB band vs. your target, Zin at f0, convergence, gain table (not in Fast) |
+| `<REF>_<mode>_s11_zin.png` | S11 and input impedance around f0, with the target band shaded and the resonance marked |
 | `<REF>_<mode>_smith.png` | Smith chart with f0 and band edges marked |
-| `<REF>_<mode>_pattern.png` | pattern cuts in the xz, yz and xy planes |
+| `<REF>_<mode>_pattern.png` | pattern cuts in the xz, yz and xy planes (not in Fast) |
 | `<REF>_<mode>.s1p` | Touchstone S11 at the feed pad, for matching-network design |
-| `<REF>_<mode>_pattern.vtk` | 3D pattern for ParaView |
+| `<REF>_<mode>_pattern.vtk` | 3D pattern for ParaView (not in Fast) |
 
 To compare against a measurement, save your VNA's 1-port file as `measured.s1p` in the run folder and rerun
 with `--post`. It's drawn over the S11 and Smith plots.
@@ -216,7 +253,7 @@ Mention these whenever you share a result.
 - It won't run below 100 MHz (NFC and other low-frequency loops). An FDTD solver would need millions of
   timesteps there.
 - No spaces in the openEMS path or the run folder path. That's an openEMS limitation.
-- Coarse runs show trends. Do the final tuning on the real board with a VNA.
+- Fast and Coarse runs show trends. Do the final tuning on the real board with a VNA.
 - Not tested yet: Linux, macOS, paths with non-English characters, and KiCad's Flatpak build (not supported).
 
 ## Troubleshooting
@@ -235,6 +272,9 @@ Mention these whenever you share a result.
 | `the nearest … copper to feed pad … is diagonal` | put ground copper straight across from the feed pad, or under it |
 | `no stackup` warning, or wrong εr | set up **Board Setup > Physical Stackup** |
 | `NOT CONVERGED` in the result | the run hit its step limit and the numbers aren't reliable. Check the model picture |
+| `another kicad2ant run is using …` | a run is already going in that run folder. Wait for it, or give another `--out` |
+
+Anything else: click **Copy log** and paste the log into an issue.
 
 ## For developers
 
@@ -258,6 +298,7 @@ addon repository wants.
 | `kicad_plugin/kicad2ant_plugin/` | the plugin: `__init__.py` (window), `core.py` (helpers) |
 | `kicad_plugin/metadata.json`, `build_pcm.py` | package metadata and builder |
 | `examples/ti_ifa/` | example board with coarse results |
+| `examples/openems_ifa/` | openEMS's own `inverted_f.m` antenna as a KiCad board, with fast and coarse results |
 | `SKILL.md` | the Claude Code skill |
 | `CHANGELOG.md` | changes per version |
 
