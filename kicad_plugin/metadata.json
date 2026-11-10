@@ -1,0 +1,31 @@
+{
+  "name": "kicad2ant",
+  "description": "Simulate the PCB antenna of the open board in openEMS: S11, band, gain, pattern.",
+  "description_full": "kicad2ant simulates the printed antenna on the open KiCad board with openEMS (free FDTD solver, run through GNU Octave). It reads the antenna footprint, the ground zones and vias and the stackup, and reports S11, input impedance, the -10 dB band against your target band, gain and radiation pattern, plus a Touchstone .s1p for matching design. Needs Python 3, GNU Octave and openEMS installed.",
+  "identifier": "com.github.sijah.kicad2ant",
+  "type": "plugin",
+  "author": {
+    "name": "sijah",
+    "contact": {
+      "web": "https://github.com/sijah/kicad2ant"
+    }
+  },
+  "maintainer": {
+    "name": "sijah",
+    "contact": {
+      "web": "https://github.com/sijah/kicad2ant/issues"
+    }
+  },
+  "license": "GPL-3.0-or-later",
+  "resources": {
+    "homepage": "https://github.com/sijah/kicad2ant"
+  },
+  "versions": [
+    {
+      "version": "0.1.0",
+      "status": "testing",
+      "kicad_version": "7.0",
+      "kicad_version_max": "10.99"
+    }
+  ]
+}

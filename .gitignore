@@ -23,3 +23,4 @@ Thumbs.db
 # private notes
 docs/DEVNOTES.md
 docs/session-log-*.md
+dist/

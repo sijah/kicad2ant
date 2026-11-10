@@ -30,4 +30,16 @@ Open `*_geometry.png` first to check the antenna and ground look right.
 
 Other frequency, e.g. 868 MHz: `python scripts/kicad2ant.py myboard.kicad_pcb --f0 868`
 
+## Use it inside KiCad (KiCad 7 to 10)
+
+After the installs in step 1:
+
+1. Get `kicad2ant-<version>-pcm.zip` (or build it: `python kicad_plugin/build_pcm.py`, it lands in `dist/`).
+2. KiCad: **Plugin and Content Manager > Install from File...** and pick the zip.
+3. In the PCB editor press the kicad2ant button in the top toolbar (also under **Tools > External Plugins**).
+   Run **Check model** first, then **Coarse**. Zones are filled for you and your board file is not changed.
+
+If a run fails, the red text in the plugin window says what is missing (usually Octave or openEMS not found:
+set the Octave path in the window). The Flatpak build of KiCad on Linux is not supported.
+
 Full options and details: [docs/USAGE.md](docs/USAGE.md). Example board: [examples/ti_ifa](examples/ti_ifa).
