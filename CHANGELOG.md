@@ -1,5 +1,21 @@
 # Changelog — kicad2ant
 
+## Unreleased
+
+### Added
+- `scripts/fp2board.py`: puts an antenna footprint (`.kicad_mod`) on a bare board that kicad2ant can
+  simulate (ground polygons to GND zones, feed pad off the ground, outline, stackup). The 19 example
+  footprints are converted into `examples/<name>/`.
+- The extractor reads board copper shapes on the ground net (`gr_poly` / `gr_rect` ... with a net) as ground.
+
+### Fixed
+- The mesh could drop a port plane that fell within a third of a cell of a copper edge (a feed pad a
+  little narrower than its trace): the port collapsed to zero width and S11 came out 0 dB.
+- Two copper-edge mesh lines closer than a third of a cell now merge into one line midway between them
+  (the rule from OpenEMSH) instead of keeping the first, so the copper stays centred.
+- Fast mode: a long straight ground edge next to the port was missed (its middle was far from the port),
+  so the mesh could merge the feed gap away.
+
 ## v0.2.0 (2026-11-10)
 
 ### Added

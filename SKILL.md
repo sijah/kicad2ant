@@ -1,6 +1,6 @@
 ---
 name: kicad2ant
-description: Simulates a printed PCB antenna footprint from a KiCad board in openEMS (FDTD) via Octave - extracts the antenna footprint's copper on any layer, the GND net's zone fills, tracks and vias on every copper layer, the full stackup, the board outline with cutouts and the feed port from the .kicad_pcb, builds the model, runs it, and reports S11, Zin, Smith chart, the -10 dB band, directivity / radiation efficiency / gain / realized gain over the band, pattern cuts, a Touchstone .s1p for matching-network design and an overlay of a VNA measurement. Use when the user wants to simulate, check or tune a PCB antenna (IFA, MIFA, meander, loop, monopole, patch) from KiCad, see its S11 or pattern, compare it with a measurement, or get an .s1p for the match.
+description: Simulates a printed PCB antenna footprint from a KiCad board in openEMS (FDTD) via Octave - extracts the antenna footprint's copper on any layer, the GND net's zone fills, tracks and vias on every copper layer, the full stackup, the board outline with cutouts and the feed port from the .kicad_pcb, builds the model, runs it, and reports S11, Zin, Smith chart, the -10 dB band, directivity / radiation efficiency / gain / realized gain over the band, pattern cuts, a Touchstone .s1p for matching-network design and an overlay of a VNA measurement. Also turns a bare antenna footprint (.kicad_mod) into a board to simulate. Use when the user wants to simulate, check or tune a PCB antenna (IFA, MIFA, meander, loop, monopole, patch) from KiCad, see its S11 or pattern, compare it with a measurement, or get an .s1p for the match.
 ---
 
 # kicad2ant: KiCad antenna -> openEMS
@@ -44,6 +44,27 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
    antenna length; close but mismatched -> match network from the `.s1p`.
 
 After editing `extract_antenna.py` run `python scripts/test_extract.py` (prints OK).
+
+## Starting from a footprint (.kicad_mod) only
+
+`python <skill>/scripts/fp2board.py ANT.kicad_mod [OUT.kicad_pcb] [options]` builds a bare board around it:
+copper polygons holding a pad-2 via (>= 20 % of the largest one) become filled GND zones, without pad 2
+the largest polygon is the ground; the rest stays the antenna footprint `ANT1`; pad 1 = RF, pads 2 = GND;
+outline = F.Fab + copper bounds; 2 layers, or 4 when an inner layer is used. A feed pad that overlaps the
+ground on its layer is moved onto the end of the nearest antenna copper (printed). Default output
+`<folder>/<name>/<name>.kicad_pcb` (lower case, no spaces).
+
+1. Read the footprint's `descr` for the board: pass `--thickness`, `--er`, `--tand`, `--prepreg` (4-layer
+   outer dielectric). Unstated -> 1.6 mm FR4 4.5; tell the user what was assumed.
+2. Convert, then **always dry-run** and look at the geometry: the magenta port must sit on the feed
+   line's end, not on a short. If not: `--list` numbers the copper polygons, `--feed-at X Y` (footprint
+   mm) places pad 1, `--ground I,J` makes more polygons ground (e.g. the second wire of a two-wire feed).
+3. Limits to say: a gap feed over a full bottom ground becomes a vertical port to that ground (the
+   extractor prefers ground under the pad); a balanced design (bow-tie) is fed from one arm to the
+   other and S11 is against 50 ohm.
+
+Converted examples that needed options: `TI DN007 IFA` `--thickness 1.0 --feed-at 0.68 -0.05`;
+`TI DN034 Yagi` `--prepreg 0.226 --ground 7,8 --feed-at 0.5 0`.
 
 ## Tuning: try antenna changes without touching the user's board or results
 

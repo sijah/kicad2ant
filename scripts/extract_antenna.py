@@ -232,6 +232,9 @@ for zn in kids(pcb, 'zone'):
     if not n: continue
     fp_ = kids(zn, 'filled_polygon'); zempty[n] = zempty.get(n, 0) + (not fp_)
     zfill.setdefault(n, []).extend((one(f, 'layer')[1], path(one(f, 'pts'), bd)) for f in fp_ if one(f, 'layer')[1] in cu_z)
+for g in pcb[1:]:                              # board copper shapes on a net: a ground drawn as a shape (no refill changes it)
+    if isinstance(g, list) and g[0].startswith('gr_') and (one(g, 'layer') or [0, ''])[1] in cu_z and netname(g):
+        zfill.setdefault(netname(g), []).extend((one(g, 'layer')[1], r) for r in shapes(g, bd))
 zarea = {n: sum(area(r) for _, r in v) for n, v in zfill.items()}
 leaf = lambda n: n.rsplit('/', 1)[-1]          # a net's name without its sheet path
 if a.gnd:   # as typed: the exact net, else its name after the sheet path (/rf/GND for GND), else ignoring case
@@ -336,14 +339,15 @@ for L, r in ant:
 # straight ground edges within 1 mm of the port on the feed pad's layer: fast mode puts mesh lines on them, else
 # its edge-exact mesh merges the pad-to-ground clearance away and shorts the port (shortcut: a clearance under
 # cell_ant/3, ~0.17 mm, can still merge)
-near_port = lambda x, y: port[0] - 1 <= x <= port[3] + 1 and port[1] - 1 <= y <= port[4] + 1
+win = ((port[0] - 1, port[3] + 1), (port[1] - 1, port[4] + 1))   # x and y range around the port
 pgnd = (set(), set())
 for L, r in fills:
     if L != fl: continue
     for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]):
         for ax, (a1, a2, b1, b2) in enumerate(((x1, x2, y1, y2), (y1, y2, x1, x2))):
-            m = (b1 + b2) / 2
-            if abs(a1 - a2) < 1e-4 and abs(b1 - b2) >= 0.05 and near_port(*((a1, m) if ax == 0 else (m, a1))): pgnd[ax].add(round(a1, 4))
+            wa, wb = win[ax], win[1 - ax]           # an edge that crosses the window counts, however long it is
+            if (abs(a1 - a2) < 1e-4 and abs(b1 - b2) >= 0.05 and wa[0] <= a1 <= wa[1]
+                    and min(b1, b2) <= wb[1] and max(b1, b2) >= wb[0]): pgnd[ax].add(round(a1, 4))
 mx =sorted({round(p[0], 3) for p in hint}); my = sorted({round(p[1], 3) for p in hint})
 
 # ---- write ---------------------------------------------------------------------------------------

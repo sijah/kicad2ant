@@ -316,4 +316,6 @@ GPL-3.0-or-later, see [LICENSE](LICENSE). openEMS and CSXCAD are © Thorsten Lie
 
 Some design ideas came from [kicad2ems](https://github.com/lowprocess/kicad2ems) (air box size, excitation
 beyond the band, gain table) and Antmicro's [gerber2ems](https://github.com/antmicro/gerber2ems) (VNA overlay,
-Smith chart, convergence check). No code was copied from either.
+Smith chart, convergence check), and the mesh rules for lines that fall too close together (port planes
+always kept, two close edge lines merged midway) from [OpenEMSH](https://github.com/Open-RFlab/openemsh).
+No code was copied from any of them.

@@ -107,8 +107,15 @@ for a = 1:2
   else, pri = [geom.port([a a+3]), e(:, 1)' + e(:, 2)' * cell_ant/3, e(:, 1)' - e(:, 2)' * 2*cell_ant/3]; end
   low = [geom.(['mesh_' axn(a)]), fine(a):cell_ant:fine(a+2), gb(a):dg:gb(a+3), bb(a), bb(a+2), cl{a}, co(a) - air, co(a+3) + air];
   for pass = 1:2                   % before and after smoothing
-    p = sort(pri); keep = p(1);
-    for t = p(2:end), if t - keep(end) > cell_ant/3, keep(end+1) = t; end, end
+    keep = unique(pri(1:2)); np = numel(keep);   % the port planes always: dropping one collapses the port to zero width
+    for t = sort(pri(3:end))
+      if any(abs(t - keep(1:np)) <= cell_ant/3), continue; end
+      if numel(keep) > np && t - keep(end) <= cell_ant/3   % two edge lines too close: one line midway, not the
+        m = (keep(end) + t) / 2;                          % first one (OpenEMSH's rule: keeps the copper centred)
+        if all(abs(m - keep(1:np)) > cell_ant/3), keep(end) = m; end
+      else, keep(end+1) = t; end
+    end
+    keep = sort(keep);
     w = sort(low); w = w(arrayfun(@(t) min(abs(keep - t)) > cell_ant/2, w));
     v = sort([keep w]); out = v(1);
     for t = v(2:end), if t - out(end) > cell_ant/4 * (1 + fast) || any(keep == t), out(end+1) = t; end, end   % fast: no cell under cell_ant/2 between grids

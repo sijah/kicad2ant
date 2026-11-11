@@ -164,4 +164,12 @@ r, t = extract(board().replace('(xy 0 0.5) (xy 10 0.5) (xy 10 1.5) (xy 0 1.5)', 
 first = re.search(r"geom\.ant\{end\+1\} = struct\('layer', 'F\.Cu'.*?'pts', \[([^\]]*)\]", t).group(1)
 v = [float(x) for x in first.replace(';', ' ').split()]
 assert len(v) == 2 * 5 and abs(area(v) - 10) < 1e-6, first   # 4 corners + the slit mouth on the edge
+
+# 13. fp2board: a footprint with its own ground plane -> GND zones, feed pad moved off the ground onto the stub
+d = tempfile.mkdtemp(); pcb = os.path.join(d, 'b.kicad_pcb')
+r = subprocess.run([sys.executable, os.path.join(HERE, 'fp2board.py'), os.path.join(HERE, 'fixtures', 'printed_ifa.kicad_mod'), pcb],
+                   capture_output=True, text=True)
+assert r.returncode == 0 and 'moved from (0, 0) to (0, -0.75)' in r.stdout, (r.stdout, r.stderr)
+r = subprocess.run([sys.executable, os.path.join(HERE, 'extract_antenna.py'), pcb, 'ANT1', os.path.join(d, 'g.m')], capture_output=True, text=True)
+assert r.returncode == 0 and "2 GND fills on ['F.Cu', 'B.Cu']" in r.stdout and 'port in-plane on F.Cu' in r.stdout, (r.stdout, r.stderr)
 print('OK')
