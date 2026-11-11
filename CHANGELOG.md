@@ -8,6 +8,14 @@
   footprints are converted into `examples/<name>/`.
 - The extractor reads board copper shapes on the ground net (`gr_poly` / `gr_rect` ... with a net) as ground.
 
+### Changed
+- The copper sheets lie on the faces of the stackup's dielectric, which keeps its own thickness. Before, each
+  sheet sat at the middle of its copper layer, so a 0.73 mm dielectric was modelled 0.765 mm thick.
+- Mesh: lines come only from copper edges along x or y (within 5°), plus the antenna's extent, the port and the
+  vias. An arc or a diagonal no longer gives a line per facet; the cell grid over the antenna resolves it
+  (the rule pcbmodelgen and kicad2ems use). 6–33 % fewer cells on the example boards.
+- Mesh: the largest cell is sized at the top of the sweep (f0 + fc), not at the top of the excitation.
+
 ### Fixed
 - The mesh could drop a port plane that fell within a third of a cell of a copper edge (a feed pad a
   little narrower than its trace): the port collapsed to zero width and S11 came out 0 dB.

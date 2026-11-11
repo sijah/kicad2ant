@@ -68,7 +68,7 @@ if not layers:
     warn(f'no stackup in the board: 2 layers, {h} mm board, epsR 4.5, tan d 0.02 assumed')
     layers = [['cu', 'F.Cu', 0.035], ['d', [{'thickness': h - 0.07}]], ['cu', 'B.Cu', 0.035]]
 cu_z, diel, z, pend, prev = {}, [], 0.0, [], None
-for L in layers[::-1]:                        # bottom up; copper is a sheet at its mid-plane
+for L in layers[::-1]:                        # bottom up; copper is a sheet on the face of its dielectric
     if L[0] == 'd': pend += L[1]; continue
     if prev:
         for s in pend: assert 'thickness' in s, 'a stackup dielectric has no thickness'
@@ -76,7 +76,7 @@ for L in layers[::-1]:                        # bottom up; copper is a sheet at 
         for k, d in (('epsilon_r', 4.5), ('loss_tangent', 0.02)):
             if any(k not in s for s in pend): warn(f'stackup dielectric under {L[1]} has no {k}: {d} used')
         mean = lambda k, d: sum(s['thickness'] * s.get(k, d) for s in pend) / tt
-        dz = tt + prev[2] / 2 + L[2] / 2
+        dz = tt                                # the stackup's dielectric as it is; the copper adds no height
         diel.append((z, z + dz, mean('epsilon_r', 4.5), mean('loss_tangent', 0.02))); z += dz
     cu_z[L[1]], prev, pend = round(z, 5), L, []
 
@@ -325,7 +325,22 @@ loops.sort(key=area, reverse=True); outline, holes = loops[0], loops[1:]
 allp = [p for _, r in ant for p in r]
 box = (min(p[0] for p in allp), min(p[1] for p in allp), max(p[0] for p in allp), max(p[1] for p in allp))
 inbox = lambda p, m=3: box[0] - m <= p[0] <= box[2] + m and box[1] - m <= p[1] <= box[3] + m
-hint = allp + [p for _, r in fills for p in r if inbox(p)] + [(port[0], port[1]), (port[3], port[4])] + [l[:2] for l in lines if inbox(l)]
+def axis_lines(rings, near=lambda p: True):
+    """Mesh lines from the copper edges that run along an axis (within 5 deg, at least 0.05 mm long): x lines
+    from edges along y, y lines from edges along x. Diagonal and arc edges (and the little rectangles a stroked
+    outline is made of) give none: the cell_ant grid over the antenna resolves them (pcbmodelgen / kicad2ems)."""
+    xs, ys, t = set(), set(), math.tan(math.radians(5))
+    for r in rings:
+        for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]):
+            dx, dy = abs(x2 - x1), abs(y2 - y1)
+            if math.hypot(dx, dy) < 0.05 or not (near((x1, y1)) or near((x2, y2))): continue
+            if dx <= t * dy: xs.add(round((x1 + x2) / 2, 3))
+            if dy <= t * dx: ys.add(round((y1 + y2) / 2, 3))
+    return xs, ys
+hx, hy = axis_lines([r for _, r in ant])
+gx, gy = axis_lines([r for _, r in fills], inbox)
+pts = [(box[0], box[1]), (box[2], box[3]), (port[0], port[1]), (port[3], port[4])] + [l[:2] for l in lines if inbox(l)]
+hx |= gx | {round(p[0], 3) for p in pts}; hy |= gy | {round(p[1], 3) for p in pts}
 # straight antenna edges for the thirds rule: coordinate -> side of the metal (+1 above, -1 below)
 edge = ({}, {})
 for L, r in ant:
@@ -348,7 +363,7 @@ for L, r in fills:
             wa, wb = win[ax], win[1 - ax]           # an edge that crosses the window counts, however long it is
             if (abs(a1 - a2) < 1e-4 and abs(b1 - b2) >= 0.05 and wa[0] <= a1 <= wa[1]
                     and min(b1, b2) <= wb[1] and max(b1, b2) >= wb[0]): pgnd[ax].add(round(a1, 4))
-mx =sorted({round(p[0], 3) for p in hint}); my = sorted({round(p[1], 3) for p in hint})
+mx, my = sorted(hx), sorted(hy)
 
 # ---- write ---------------------------------------------------------------------------------------
 M = lambda P: '[' + '; '.join(f'{x:.4f} {y:.4f}' for x, y in P) + ']'

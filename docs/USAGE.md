@@ -74,7 +74,9 @@ expect it.
 
 - Copper is perfect conductor sheets: the antenna, the GND zone fills and the GND tracks. GND vias
   and plated holes are wires. One dielectric is
-  extruded over the outline between each pair of copper layers. The board sits in air (λ/4 at f0,
+  extruded over the outline between each pair of copper layers, as thick as the stackup's dielectric
+  there; the copper sheets lie on its faces and add no height (a 0.035 / 0.73 / 0.035 mm board is
+  modelled 0.73 mm thick). The board sits in air (λ/4 at f0,
   at least 5 mm) with PML absorbing boundaries.
 - The feed is a 50 Ω lumped port:
   - **vertical** from the feed pad to the GND fill under it, when another layer has GND there;

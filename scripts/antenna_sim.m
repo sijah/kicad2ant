@@ -91,7 +91,8 @@ end
 
 %% mesh: thirds rule on straight antenna edges, port planes kept exactly, other lines merged
 % within cell_ant/2 of a kept one, graded to lambda/air_div, 8 PML cells outside the air
-lam = c0 / (f_ex + fc_ex) / unit;                  % shortest excited wavelength (mm)
+lam = c0 / (f0 + fc) / unit;       % shortest wavelength of the sweep (mm); the excitation's tail above it is
+                                   % still at lambda/12 or finer (kicad2ems sizes its cells at the band top too)
 d_sub = lam / sqrt(max(geom.diel(:, 3))) / air_div; % largest cell inside the board
 cl = {[], [], []}; gb = [bb(1:2) 0 bb(3:4)]; dg = d_sub;   % the dielectric grid: over the board, or over the whole case
 if ~isempty(case_box)              % one grid, not a second one interleaved with the board's (7x the cells)

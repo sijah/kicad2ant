@@ -1,7 +1,7 @@
 """Self-check for extract_antenna.py: python test_extract.py  (prints OK or fails an assert).
 Builds small boards and checks the extracted stackup, outline, antenna copper, ground, PEC lines and port.
 Also runs KiCad's own RF_Antenna footprints when a KiCad install is found."""
-import glob, os, re, subprocess, sys, tempfile
+import glob, math, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STACKUP = '''
@@ -74,17 +74,17 @@ near = lambda a, b, tol=1e-3: len(a) == len(b) and all(abs(x - y) < tol for x, y
 r, t = extract(board())
 assert r.returncode == 0, r.stderr
 assert get(t, 'gnd_net') == 'GND'
-assert near(get(t, 'cu_z'), [1.405, 1.17, 0.235, 0]), get(t, 'cu_z')          # F, In1, In2, B
-assert near(get(t, 'diel'), [0, 0.235, 4.3, 0, 0.235, 1.17, (0.8 * 4.6 + 0.1 * 4) / 0.9, (0.8 * 0.02 + 0.1 * 0.01) / 0.9,
-                             1.17, 1.405, 4.3, 0.02], 1e-4), get(t, 'diel')    # tan d 0 kept as 0
+assert near(get(t, 'cu_z'), [1.3, 1.1, 0.2, 0]), get(t, 'cu_z')          # F, In1, In2, B
+assert near(get(t, 'diel'), [0, 0.2, 4.3, 0, 0.2, 1.1, (0.8 * 4.6 + 0.1 * 4) / 0.9, (0.8 * 0.02 + 0.1 * 0.01) / 0.9,
+                             1.1, 1.3, 4.3, 0.02], 1e-4), get(t, 'diel')    # tan d 0 kept as 0
 o = get(t, 'outline')
 assert near([min(o[0::2]), min(o[1::2]), max(o[0::2]), max(o[1::2])], [-20, -3, 30, 30]), o   # silk line not in it
 assert abs(area(o) - (50 * 33 - (9 - 3.14159 * 9 / 4))) < 0.1, area(o)                # rounded corner
 assert len(re.findall(r'geom\.holes = \{\[', t)) == 1
 assert t.count('geom.ant{end+1}') == 1 + 4 + 1 + 1 + 4 + 4, t.count('geom.ant{end+1}')  # poly+stroke, B line, 3 pads
 assert "'F.Fab'" not in t and re.search(r"'B.Cu', 'z', 0(.0)?, 'pts'", t)
-assert near(get(t, 'lines'), [3, 0, 0, 1.405, 5, 0, 0, 1.405, -10, 20, 0, 1.405]), get(t, 'lines')  # barrels + GND via only
-assert near(get(t, 'port'), [0.75, -0.5, 1.17, 1.25, 0.5, 1.405]) and get(t, 'port_dir') == [0, 0, 1], get(t, 'port')
+assert near(get(t, 'lines'), [3, 0, 0, 1.3, 5, 0, 0, 1.3, -10, 20, 0, 1.3]), get(t, 'lines')  # barrels + GND via only
+assert near(get(t, 'port'), [0.75, -0.5, 1.1, 1.25, 0.5, 1.3]) and get(t, 'port_dir') == [0, 0, 1], get(t, 'port')
 assert t.count('geom.gnd{end+1}') == 3
 assert get(t, 'edge_x') == [-0.25, 1, -0.1, 1, 0.75, 1, 1.25, -1, 10.1, -1, 10.25, -1], get(t, 'edge_x')   # thirds-rule edges
 assert get(t, 'edge_y') == [-2.25, 1, -1.75, -1, -1.6, 1, -0.4, -1, 0.5, -1], get(t, 'edge_y')
@@ -92,7 +92,7 @@ assert get(t, 'edge_y') == [-2.25, 1, -1.75, -1, -1.6, 1, -0.4, -1, 0.5, -1], ge
 # 2. no GND under the feed on any layer -> in-plane port to the F.Cu fill edge (KiCad y 49 = sim y 1)
 r, t = extract(board(in1_y=49))
 assert r.returncode == 0, r.stderr
-assert near(get(t, 'port'), [0.75, 0.5, 1.405, 1.25, 1, 1.405]) and get(t, 'port_dir') == [0, 1, 0], get(t, 'port')
+assert near(get(t, 'port'), [0.75, 0.5, 1.3, 1.25, 1, 1.3]) and get(t, 'port_dir') == [0, 1, 0], get(t, 'port')
 
 # 3. KiCad 6/7 reference syntax, --gnd / --feed options, error paths
 r, t = extract(board(ref='(fp_text reference "AE1" (at 0 0) (layer "F.SilkS"))'))
@@ -172,4 +172,13 @@ r = subprocess.run([sys.executable, os.path.join(HERE, 'fp2board.py'), os.path.j
 assert r.returncode == 0 and 'moved from (0, 0) to (0, -0.75)' in r.stdout, (r.stdout, r.stderr)
 r = subprocess.run([sys.executable, os.path.join(HERE, 'extract_antenna.py'), pcb, 'ANT1', os.path.join(d, 'g.m')], capture_output=True, text=True)
 assert r.returncode == 0 and "2 GND fills on ['F.Cu', 'B.Cu']" in r.stdout and 'port in-plane on F.Cu' in r.stdout, (r.stdout, r.stderr)
+
+# 14. mesh hints: an arc-ended trace (outline stroked 0.2 mm) gives lines on its straight edges and its extent,
+# not one per arc facet (nor per corner of the little rectangles the stroke is made of)
+arc = [(10 + 0.5 * math.cos(math.radians(a)), 1 + 0.5 * math.sin(math.radians(a))) for a in range(-90, 91, 10)]
+ring = '(xy 0 0.5) ' + ' '.join(f'(xy {x:.4f} {y:.4f})' for x, y in arc) + ' (xy 0 1.5)'
+r, t = extract(board().replace('(xy 0 0.5) (xy 10 0.5) (xy 10 1.5) (xy 0 1.5)', ring)); assert r.returncode == 0, r.stderr
+mx, my = get(t, 'mesh_x'), get(t, 'mesh_y')
+assert not any(10.3 < x < 10.6 for x in mx) and 10.615 in mx, mx   # was a line per facet; now only the far end
+assert -0.5 in my and -1.5 in my, my                                                      # the trace's straight edges (sim y = -KiCad y)
 print('OK')
