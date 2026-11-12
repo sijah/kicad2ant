@@ -74,6 +74,7 @@ if not a.band and a.f0 == 2440: print('target band 2400..2483.5 MHz (2.4 GHz ISM
 if not a.post:
     cmd = [sys.executable, os.path.join(HERE, 'extract_antenna.py'), board, a.ref, os.path.join(out, 'antenna_geom.m')]
     cmd += ['--feed', a.feed] * bool(a.feed) + ['--gnd', a.gnd] * bool(a.gnd)
+    cmd += ['--mode', 'coarse' if a.mode == 'dry' else a.mode, '--f0', str(a.f0)] + (['--case', *map(str, a.case)] if a.case else [])
     if subprocess.run(cmd).returncode: sys.exit(1)
 
 ems = openems()

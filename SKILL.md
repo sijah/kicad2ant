@@ -30,8 +30,8 @@ docs/USAGE.md has the install and the model. Do not copy the scripts.
 3. **Dry run:** `--mode dry`, then show `results/<REF>_geometry.png` (each copper layer, whole board
    and zoomed: GND grey, antenna orange, port magenta, PEC lines blue). Check the port is on the
    feed and the ground is where the user expects.
-4. **Fast, coarse, fine:** fast (no thirds rule, MUR, -30 dB, no far field; seconds to a minute,
-   resonance about 1-2 % below coarse) to see where it resonates; coarse (0.5 mm at the antenna, -40 dB end; a 30x36 mm 2-layer IFA board is
+4. **Fast, coarse, fine:** fast (2 cells across each trace, -30 dB, no far field; one to two minutes,
+   resonance within about 0.5 % of coarse) to see where it resonates; coarse (3 cells across each trace, -40 dB end; a 30x36 mm 2-layer IFA board is
    0.4 Mcells, ~10 min) in the background; fine (0.2 mm, -50 dB) for numbers to quote; it needs
    several GB of RAM on large boards. If the system kills a run for memory, report it, do not restart.
 5. **Measured data:** every `BOARD_kicad2ant/measured*.s1p` (`measured.s1p`, `measured1.s1p`, ...) is

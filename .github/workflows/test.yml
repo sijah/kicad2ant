@@ -12,5 +12,6 @@ jobs:
         with:
           python-version: '3.x'
       - run: python scripts/test_extract.py
+      - run: python scripts/test_mesher.py
       - run: python kicad_plugin/test_core.py
       - run: python kicad_plugin/build_pcm.py

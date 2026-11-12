@@ -1,6 +1,6 @@
 """Pull a PCB antenna and its ground out of a KiCad 6+ board into <out>.m for antenna_sim.m.
 
-usage: python extract_antenna.py BOARD.kicad_pcb REF [out.m] [--feed PAD] [--gnd NET]
+usage: python extract_antenna.py BOARD.kicad_pcb REF [out.m] [--feed PAD] [--gnd NET] [--mode M] [--f0 MHZ] [--case ...]
 
 Reads, from the board as saved:
   - antenna = every copper item of footprint REF on any copper layer: fp_poly/line/arc/rect/circle (with
@@ -19,6 +19,9 @@ ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
 ap.add_argument('board'); ap.add_argument('ref', help="the antenna footprint's reference, or auto"); ap.add_argument('out', nargs='?', default='antenna_geom.m')
 ap.add_argument('--feed', default='1', help='feed pad number (default 1)')
 ap.add_argument('--gnd', help='ground net (default: net of pad 2 of REF, else GND, else the largest zone net with a ground name)')
+ap.add_argument('--mode', choices=('fast', 'coarse', 'fine'), default='coarse', help='mesh for this run mode (mesher.py)')
+ap.add_argument('--f0', type=float, default=2440, help='design frequency, MHz: sizes the mesh')
+ap.add_argument('--case', type=float, nargs=6, help='plastic case, as kicad2ant.py --case: the mesh covers it')
 a = ap.parse_args()
 warn = lambda m: print('warning: ' + m, file=sys.stderr)
 
@@ -322,8 +325,13 @@ assert loops, 'no Edge.Cuts outline on the board'
 loops.sort(key=area, reverse=True); outline, holes = loops[0], loops[1:]
 
 # ---- mesh hints near the antenna -------------------------------------------------------------------
-allp = [p for _, r in ant for p in r]
-box = (min(p[0] for p in allp), min(p[1] for p in allp), max(p[0] for p in allp), max(p[1] for p in allp))
+# the antenna box (fine mesh around it) leaves out ground-net pads: stitching vias in the footprint, far down the
+# ground plane, would spread the fine cells over the whole board
+bbx = lambda r: (min(p[0] for p in r), min(p[1] for p in r), max(p[0] for p in r), max(p[1] for p in r))
+gpad = [bbx(q['ring']) for q in pads if q['net'] == gnd]
+inpad = lambda b: any(g[0] - 1e-3 <= b[0] and g[1] - 1e-3 <= b[1] and b[2] <= g[2] + 1e-3 and b[3] <= g[3] + 1e-3 for g in gpad)
+allp = [p for _, r in ant if not inpad(bbx(r)) for p in r] or [p for _, r in ant for p in r]
+box =(min(p[0] for p in allp), min(p[1] for p in allp), max(p[0] for p in allp), max(p[1] for p in allp))
 inbox = lambda p, m=3: box[0] - m <= p[0] <= box[2] + m and box[1] - m <= p[1] <= box[3] + m
 def axis_lines(rings, near=lambda p: True):
     """Mesh lines from the copper edges that run along an axis (within 5 deg, at least 0.05 mm long): x lines
@@ -365,6 +373,15 @@ for L, r in fills:
                     and min(b1, b2) <= wb[1] and max(b1, b2) >= wb[0]): pgnd[ax].add(round(a1, 4))
 mx, my = sorted(hx), sorted(hy)
 
+# ---- grid lines (mesher.py) ---------------------------------------------------------------------
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mesher  # noqa: E402
+grid = mesher.build(a.mode, a.f0 * 1e6, box, [list(edge[0]), list(edge[1])], [mx, my], port, [sorted(pgnd[0]), sorted(pgnd[1])],
+                    [l[:2] for l in lines], outline, list(cu_z.values()), diel, a.case)
+grid = {k: [round(v, 4) for v in grid[k]] for k in 'xyz'}   # what antenna_geom.m holds: check that, not the floats
+bad = mesher.check(grid, port, list(cu_z.values()), diel)
+if bad: sys.exit('mesh error (please report it, with the board):\n  ' + '\n  '.join(bad))
+
 # ---- write ---------------------------------------------------------------------------------------
 M = lambda P: '[' + '; '.join(f'{x:.4f} {y:.4f}' for x, y in P) + ']'
 V = lambda v: '[' + ' '.join(f'{x:.4f}' for x in v) + ']'
@@ -385,5 +402,8 @@ with open(a.out, 'w', encoding='utf8', newline='\n') as o:
         rows = '; '.join(f'{c:.4f} {sd}' for c, sd in sorted(edge[ax].items()))
         o.write(f'geom.edge_{k} = ' + (f'[{rows}]' if rows else 'zeros(0, 2)') + ';  % straight antenna edges: coordinate, metal side\n')
         o.write(f'geom.port_gnd_{k} = {V(sorted(pgnd[ax]))};  % straight ground edges near the port (fast mode mesh lines)\n')
+    o.write(f'% grid lines for {a.mode} at {a.f0:g} MHz (mesher.py), before the PML cells; worst neighbour ratio '
+            f'{max(mesher.ratio(grid[k]) for k in "xyz"):.2f}\n')
+    for k in 'xyz': o.write(f'geom.grid_{k} = {V(grid[k])};\n')
 print(f'{a.ref}: {len(ant)} antenna polygons, {len(fills)} {gnd} fills on {sorted({l for l, _ in fills}, key=order)}, '
       f'{len(lines)} PEC lines, {len(cu_z)} copper layers h {max(cu_z.values()):.3f} mm, {len(holes)} cutouts, port {pkind} -> {a.out}')

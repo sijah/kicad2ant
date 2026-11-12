@@ -82,10 +82,12 @@ expect it.
   - **vertical** from the feed pad to the GND fill under it, when another layer has GND there;
   - otherwise **in-plane**, from the pad edge to the nearest GND fill edge on the same layer. That
     edge must be straight across from the pad (not diagonal), or the extractor stops.
-- The mesh follows the rule of thirds at straight antenna edges, uses 0.5 mm cells at the antenna
-  (coarse) or 0.2 mm (fine), and grades smoothly to λ/15 or λ/20 in air.
-- Fast leaves out the thirds-rule lines, has λ/8 of air with MUR instead of λ/4 with PML_8, stops at
-  −30 dB and skips the far field. Its resonance comes out about 1–2 % below coarse.
+- The mesh (`scripts/mesher.py`, docs/MESHER.md) puts a line on every straight antenna edge, gives every
+  trace and gap at least 2 / 3 / 4 cells (fast / coarse / fine) with cells up to 0.5 / 0.25 / 0.15 mm at
+  the antenna, and grades by at most 1.3 to λ/15 (fine λ/20) in air.
+- Fast uses the coarser mesh, stops at −30 dB and skips the far field; the air (λ/4) and PML_8 are as in
+  coarse. On the printed IFA and AN043 its resonance came within 0.5 % of coarse, in about a quarter of the
+  time.
 
 ## Limits: state them with every result
 

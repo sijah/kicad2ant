@@ -19,7 +19,7 @@ files = {'metadata.json': os.path.join(HERE, 'metadata.json'),
          'plugins/icon64.png': os.path.join(HERE, 'icon64.png')}   # the logo in the window
 for name in ('__init__.py', 'core.py', 'icon.png'):
     files['plugins/' + name] = os.path.join(PLUGIN, name)
-for name in ('kicad2ant.py', 'extract_antenna.py', 'antenna_sim.m'):
+for name in ('kicad2ant.py', 'extract_antenna.py', 'mesher.py', 'antenna_sim.m'):
     files['plugins/scripts/' + name] = os.path.join(ROOT, 'scripts', name)
 
 name = '%s-%s.zip' % (meta['identifier'], version)

@@ -40,11 +40,11 @@ clear geom; run(fullfile(here, 'antenna_geom.m'));
 name = regexprep(geom.ref, '[^\w-]', '_');
 
 %% parameters
-if strcmp(res, 'fine'), cell_ant = 0.2; air_div = 20; nz = 4; end_crit = 1e-5;
-else                    cell_ant = 0.5; air_div = 15; nz = 2; end_crit = 1e-4; end
-% fast: S11 only. No thirds-rule lines (larger timestep), MUR and lambda/8 air instead of PML and lambda/4, -30 dB, no far field
+% the mesh itself is mesher.py's (cells per mode there)
+if strcmp(res, 'fine'), end_crit = 1e-5; else, end_crit = 1e-4; end
+% fast: S11 only. Larger cells (mesher.py), -30 dB, no far field. Same PML and lambda/4 air as coarse: MUR with
+% lambda/8 air was 2.5 % off on the printed IFA and gave -9 dB for -21 dB on AN043
 fast = strcmp(res, 'fast'); if fast, end_crit = 1e-3; end
-air = max(5, c0 / f0 / unit / (4 + 4*fast));  % air on every side: lambda/4 at f0 (fast: lambda/8), then the boundary
 % the excitation reaches 30 % of the band past its top: the far field comes out wrong near the
 % upper edge of the Gaussian's band while S11 still looks fine (kicad2ems, docs/maintenance.md)
 f_ex = f0 + 0.3 * fc; fc_ex = 1.3 * fc;
@@ -53,8 +53,7 @@ f_ex = f0 + 0.3 * fc; fc_ex = 1.3 * fc;
 nrts = 300000;                     % step limit: a run that hits it did not converge (warned in the summary)
 FDTD = InitFDTD('NrTS', nrts, 'EndCriteria', end_crit);
 FDTD = SetGaussExcite(FDTD, f_ex, fc_ex);
-if fast, FDTD = SetBoundaryCond(FDTD, {'MUR' 'MUR' 'MUR' 'MUR' 'MUR' 'MUR'});
-else, FDTD = SetBoundaryCond(FDTD, {'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8'}); end
+FDTD = SetBoundaryCond(FDTD, {'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8'});
 CSX = InitCSX();
 zmax = max(geom.cu_z);
 for k = 1:size(geom.diel, 1)       % one dielectric per copper pair, extruded over the outline
@@ -87,57 +86,35 @@ if ~isempty(case_box)              % six plastic walls, below the board's priori
     lo = co(1:3); lo(a) = ci(a+3); CSX = AddBox(CSX, 'case', 0, lo, co(4:6));
   end
 end
-[CSX, port] = AddLumpedPort(CSX, 5, 1, 50, geom.port(1:3), geom.port(4:6), geom.port_dir, true);
+% the port: a line along port_dir through the pad centre, as a commercial EM tool's; a port box over the whole pad cost
+% 11 dB of match depth and +1 % in frequency on the AN043 reference (docs/MESHING.md section 7)
+pk = find(abs(geom.port_dir) > 0.5); ps = (geom.port(1:3) + geom.port(4:6)) / 2;
+gl = {geom.grid_x, geom.grid_y, geom.grid_z};   % a line port off the grid lines excites nothing: snap it onto them
+for k = 1:3, [~, i] = min(abs(gl{k} - ps(k))); ps(k) = gl{k}(i); end
+pe = ps;
+ps(pk) = geom.port(pk); pe(pk) = geom.port(pk + 3);
+[CSX, port] = AddLumpedPort(CSX, 5, 1, 50, ps, pe, geom.port_dir, true);
 
-%% mesh: thirds rule on straight antenna edges, port planes kept exactly, other lines merged
-% within cell_ant/2 of a kept one, graded to lambda/air_div, 8 PML cells outside the air
-lam = c0 / (f0 + fc) / unit;       % shortest wavelength of the sweep (mm); the excitation's tail above it is
-                                   % still at lambda/12 or finer (kicad2ems sizes its cells at the band top too)
-d_sub = lam / sqrt(max(geom.diel(:, 3))) / air_div; % largest cell inside the board
-cl = {[], [], []}; gb = [bb(1:2) 0 bb(3:4)]; dg = d_sub;   % the dielectric grid: over the board, or over the whole case
-if ~isempty(case_box)              % one grid, not a second one interleaved with the board's (7x the cells)
-  for a = 1:3, cl{a} = [co(a), ci(a), ci(a+3), co(a+3)]; end   % both faces of each wall
-  gb = co; dg = min(d_sub, lam / sqrt(case_box(1)) / air_div);
-end
-fine = [geom.ant_box(1:2) - 3, geom.ant_box(3:4) + 3];
-axn = 'xy';
-for a = 1:2
-  e = geom.(['edge_' axn(a)]);
-  if fast, pri = [geom.port([a a+3]), e(:, 1)'];   % lines on the copper edges themselves
-    g = ['port_gnd_' axn(a)]; if isfield(geom, g), pri = [pri, geom.(g)]; end   % and on the ground around the feed: keeps the clearance open
-  else, pri = [geom.port([a a+3]), e(:, 1)' + e(:, 2)' * cell_ant/3, e(:, 1)' - e(:, 2)' * 2*cell_ant/3]; end
-  low = [geom.(['mesh_' axn(a)]), fine(a):cell_ant:fine(a+2), gb(a):dg:gb(a+3), bb(a), bb(a+2), cl{a}, co(a) - air, co(a+3) + air];
-  for pass = 1:2                   % before and after smoothing
-    keep = unique(pri(1:2)); np = numel(keep);   % the port planes always: dropping one collapses the port to zero width
-    for t = sort(pri(3:end))
-      if any(abs(t - keep(1:np)) <= cell_ant/3), continue; end
-      if numel(keep) > np && t - keep(end) <= cell_ant/3   % two edge lines too close: one line midway, not the
-        m = (keep(end) + t) / 2;                          % first one (OpenEMSH's rule: keeps the copper centred)
-        if all(abs(m - keep(1:np)) > cell_ant/3), keep(end) = m; end
-      else, keep(end+1) = t; end
-    end
-    keep = sort(keep);
-    w = sort(low); w = w(arrayfun(@(t) min(abs(keep - t)) > cell_ant/2, w));
-    v = sort([keep w]); out = v(1);
-    for t = v(2:end), if t - out(end) > cell_ant/4 * (1 + fast) || any(keep == t), out(end+1) = t; end, end   % fast: no cell under cell_ant/2 between grids
-    mesh.(axn(a)) = out;
-    if pass == 1, low = SmoothMeshLines(out, lam / air_div, 1.4); end
-  end
-end
-zl = unique([geom.cu_z, geom.diel(:, 1)', geom.diel(:, 2)', cl{3}, co(3) - air, co(6) + air]);
-for k = 1:size(geom.diel, 1)
-  d = geom.diel(k, :); zl = [zl, linspace(d(1), d(2), max(nz, ceil((d(2) - d(1)) / cell_ant)) + 1)];
-end
-zl = unique(round(zl * 1e5) / 1e5);
-mesh.z = SmoothMeshLines(zl, lam / air_div, 1.4);
-dmax = lam / air_div;              % the PML: 8 more cells on every side
-if ~fast, for a = 'xyz', v = mesh.(a); mesh.(a) = [v(1) - (8:-1:1) * dmax, v, v(end) + (1:8) * dmax]; end, end
+%% mesh: the grid lines come from mesher.py, written into antenna_geom.m by extract_antenna.py (lines on the copper
+% edges, at least 3-4 cells across every trace and gap, cells growing by at most 1.3; docs/MESHER.md); 8 PML cells
+% outside the air are added here
+assert(isfield(geom, 'grid_x'), 'antenna_geom.m has no grid lines (made by an older kicad2ant): run kicad2ant.py again without --post');
+fine = [geom.ant_box(1:2) - 3, geom.ant_box(3:4) + 3];   % the antenna region (the geometry plot zooms to it)
+mesh.x = geom.grid_x; mesh.y = geom.grid_y; mesh.z = geom.grid_z;
+% PML cells as big as the last air cell on that side (uniform, as PML wants), so there is no jump into it
+for a = 'xyz', v = mesh.(a); mesh.(a) = [v(1) - (8:-1:1) * (v(2) - v(1)), v, v(end) + (1:8) * (v(end) - v(end-1))]; end
 CSX = DefineRectGrid(CSX, unit, mesh);
 ncell = numel(mesh.x) * numel(mesh.y) * numel(mesh.z);
 dmin = min([diff(mesh.x) diff(mesh.y) diff(mesh.z)]);
 rmax = max(cellfun(@(v) max([diff(v(2:end)) ./ diff(v(1:end-1)), diff(v(1:end-1)) ./ diff(v(2:end))]), {mesh.x, mesh.y, mesh.z}));
 fprintf('%s mesh: %d x %d x %d = %.2f Mcells, smallest cell %.3f mm, worst neighbour ratio %.2f\n', res, numel(mesh.x), numel(mesh.y), numel(mesh.z), ncell/1e6, dmin, rmax);
-if ~fast, [CSX, nf2ff] = CreateNF2FFBox(CSX, 'nf2ff', [mesh.x(10) mesh.y(10) mesh.z(10)], [mesh.x(end-9) mesh.y(end-9) mesh.z(end-9)]); end
+% NF2FF box one cell inside the PML (lines 1..9 are its 8 cells), around the board and case (it must not cut the
+% dielectric). 4 cells in was tried on AN043: D 2.47 dBi / eff 76 % against the reference's 2.13 / 90 %, which this gives
+nb = [mesh.x(10) mesh.y(10) mesh.z(10) mesh.x(end-9) mesh.y(end-9) mesh.z(end-9)];
+if ~fast
+  assert(all(nb(1:3) < co(1:3)) && all(nb(4:6) > co(4:6)), 'NF2FF box cuts the board or case: too little air (mesher.py)');
+  [CSX, nf2ff] = CreateNF2FFBox(CSX, 'nf2ff', nb(1:3), nb(4:6));
+end
 
 %% geometry plot: every copper layer, whole board and around the antenna
 out = fullfile(here, 'results'); [~,~] = mkdir(out);
