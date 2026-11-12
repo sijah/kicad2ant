@@ -178,6 +178,12 @@ PML.
 - A port pad with 0.25 mm cells next to 0.15 mm trace cells gave ratio 1.67. Fix: a final repair pass
   halves any cell more than 1.5× a neighbour (easyMesh4openEMS's idea). Worst ratio is now 1.3 on AN043
   and the printed IFA in every mode, and 1.3–1.48 on ti_ifa.
+- That repair pass cascaded. Halving a cell leaves the cell beyond it twice as big, so it is halved too,
+  and on a ramp graded at 1.3 this runs out to the domain edge. TI DN007 fast had 180 y lines with
+  0.05 mm cells, more than coarse, and took 960 s. Fix: a jump is repaired only when the halving chain
+  ends within 6 cells (a bump). A step into a ramp is left as it is, at 1.5–1.9. Fast grids shrank on
+  most of the example boards (DN007 0.49 → 0.22 M cells, printed IFA 0.21 → 0.15 M). Coarse is unchanged
+  on most boards; on dk10 it went 4.0 → 2.1 M and on a test board 1.07 → 0.70 M.
 
 ### 4.2 Checks before the solver
 

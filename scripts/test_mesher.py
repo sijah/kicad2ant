@@ -24,6 +24,9 @@ assert min(b - a for a, b in zip(v, v[1:])) >= 0.099, v
 # repair(): a cell over 1.5 times its neighbour is halved, and the lines already there stay
 v = mesher.repair([0, 0.15, 0.3, 0.55, 0.8, 0.95])
 assert {0, 0.15, 0.3, 0.55, 0.8, 0.95} <= set(v) and mesher.ratio(v) <= 1.5, v
+# ... but a step into a ramp graded at 1.3 is left: halving it would halve every cell of the ramp (TI DN007 fast)
+ramp = [0, 0.125, 0.325] + [0.325 + sum(0.2 * 1.3 ** j for j in range(1, n + 1)) for n in range(1, 12)]
+assert mesher.repair(ramp) == ramp
 
 # fill(): grows from both ends, never above smax, ends exactly on the gap
 f = mesher.fill(0.0, 10.0, 0.1, 0.2, 1.0)

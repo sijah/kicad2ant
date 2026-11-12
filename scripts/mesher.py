@@ -74,16 +74,33 @@ def axis(keep, edges, other, sizes, merge):
     return repair(sorted(out))
 
 
-def repair(v, rmax=1.5):
-    """Halve any cell more than rmax times a neighbour (easyMesh4openEMS's ratio repair). Each gap is filled
+def repair(v, rmax=1.5, reach=6):
+    """Halve a cell more than rmax times a neighbour (easyMesh4openEMS's ratio repair). Each gap is filled
     knowing only its neighbours' limits, not the cells they end up with; this catches the jumps that leaves.
-    It only adds lines, so the copper edges stay; cells shrink toward the smaller neighbour and it stops."""
-    for _ in range(100):
+    It only adds lines, so the copper edges stay. A halved cell leaves the cell beyond it twice as big, so that one
+    is halved too; on a graded ramp that never stops (TI DN007 fast: 3x the cells, 7x the time), so a jump is
+    repaired only when the chain ends within `reach` cells (a bump), and a step in a ramp is left as it is."""
+    for _ in range(1000):
         d = [b - a for a, b in zip(v, v[1:])]
-        split = {i for i in range(len(d)) if (i and d[i] > rmax * d[i - 1]) or (i + 1 < len(d) and d[i] > rmax * d[i + 1])}
-        if not split: break
-        v = sorted(v + [(v[i] + v[i + 1]) / 2 for i in split])
+        cut = _chain(d, rmax, reach)
+        if cut is None: return v
+        v = sorted(v + [(v[k] + v[k + 1]) / 2 for k in cut])
     return v
+
+
+def _chain(d, rmax, reach):
+    """The cells to halve for the first jump that a short chain fixes, or None."""
+    big = lambda p, q: p > rmax * q + 1e-9
+    for i in range(len(d)):
+        for s in (-1, 1):                                    # s: the side of the small neighbour
+            if not (0 <= i + s < len(d) and big(d[i], d[i + s])): continue
+            cut = [i]
+            while 0 <= cut[-1] - s < len(d) and big(d[cut[-1] - s], d[cut[-1]] / 2):
+                cut.append(cut[-1] - s)
+                if len(cut) > reach: break
+            else:
+                return cut
+    return None
 
 
 def ratio_cells(d):
