@@ -209,10 +209,15 @@ def test_fast_target_and_cmd():
 
 def test_summary_fast():
     p = os.path.join(tempfile.mkdtemp(), 'AE1_fast_summary.txt')
-    write(p, 'AE1 fast run (17 s)\nboard: 2 copper layers\nfast (S11 only, no far field): confirm with coarse\n'
+    write(p, 'AE1 fast run (17 s)\nboard: 2 copper layers, 1.510 mm, epsR [4.5]; ground GND; port in-plane\n'
+             'fast (S11 only, no far field): confirm with coarse\n'
              'resonance (min S11) -21.1 dB at 2408 MHz\nrun: converged in 7344 steps; mesh worst neighbour ratio 4.07\n')
     lines = core.summary_lines(p)
     assert lines[0].startswith('fast (S11 only') and lines[1].startswith('resonance') and len(lines) == 3
+    write(p, 'AE1 fast run (17 s)\nboard: 0.8 mm, 2 copper layers, FR4 epsR 4.4, tanD 0.02\nmodel: ground GND\n'
+             'resonance (min S11) -21.1 dB at 2408 MHz\n')
+    assert core.summary_lines(p) == ['board: 0.8 mm, 2 copper layers, FR4 epsR 4.4, tanD 0.02',
+                                     'resonance (min S11) -21.1 dB at 2408 MHz']
 
 
 def test_lock_refuses_live_pid():
@@ -245,6 +250,24 @@ def test_fit():
     assert core.fit(1200, 900, 600, 600) == (600, 450)
     assert core.fit(400, 300, 600, 600) == (400, 300)   # never enlarged
 
+
+def test_board_line():
+    two = ('(kicad_pcb (general (thickness 0.8)) (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (5 "F.SilkS" user))\n'
+           ' (setup (stackup (layer "F.Mask" (type "Top Solder Mask") (thickness 0.01)) (layer "F.Cu" (type "copper") (thickness 0.035))\n'
+           '  (layer "dielectric 1" (type "core") (thickness 0.4) (material "FR4") (epsilon_r 4.4) (loss_tangent 0.02)\n'
+           '   addsublayer (thickness 0.3) (material "FR4") (epsilon_r 4.2) (loss_tangent 0.02))\n'
+           '  (layer "B.Cu" (type "copper") (thickness 0.035)) (copper_finish "None"))))')
+    i = core.board_stack(two)
+    assert i['thick'] == 0.8 and i['ncu'] == 2 and i['stackup'] and not i['default'] and abs(i['diel'][0][0] - 0.7) < 1e-9
+    assert core.board_line(i) == '0.8 mm, 2 copper layers, FR4 εr 4.2-4.4, tanδ 0.02'
+    assert core.board_line(i, short=True, uni=False) == '0.8 mm FR4 epsR 4.2-4.4'
+    bare = core.board_stack('(kicad_pcb (general (thickness 1.6)) (layers (0 "F.Cu" signal) (2 "B.Cu" signal)))')
+    assert core.board_line(bare).endswith('(no stackup set, assumed: set it in Board Setup > Physical Stackup)')
+    assert core.board_line(bare).startswith('1.6 mm, 2 copper layers, εr 4.5, tanδ 0.02')
+    dflt = core.board_stack(two.replace('(thickness 0.4)', '(thickness 1.51)').replace('(epsilon_r 4.4)', '(epsilon_r 4.5)')
+                            .replace('   addsublayer (thickness 0.3) (material "FR4") (epsilon_r 4.2) (loss_tangent 0.02)', ''))
+    assert dflt['default'] and "KiCad's default stackup" in core.board_line(dflt)
+    assert core.board_file_line('nope.kicad_pcb') == ''
 
 if __name__ == '__main__':
     for name, fn in sorted(globals().items()):

@@ -19,7 +19,7 @@ ENERGY = re.compile(r"Timestep:\s*(\d+).*?\(\s*-\s*([\d.]+)\s*dB\)")
 PHASES = (('antenna footprint:', 'Reading the board'), ('Create FDTD operator', 'Meshing'),
           ('Running FDTD engine', 'Simulating'), ('openEMS running', 'Simulating'),
           ('Time for ', 'Post-processing'), ('nf2ff', 'Post-processing'))
-SUMMARY = ('case:', 'fast (', 'resonance','min S11', 'S11 < -10', 'no -10 dB band', 'at ', 'run:')
+SUMMARY = ('board:', 'case:', 'fast (', 'resonance','min S11', 'S11 < -10', 'no -10 dB band', 'at ', 'run:')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
@@ -296,9 +296,70 @@ def summary_lines(path):
     for line in text:
         if line.startswith('   f MHz'):
             break
-        if line.startswith(SUMMARY):
+        if line.startswith(SUMMARY) and '; ground ' not in line:   # before 0.3.7 'board:' was the model's line
             keep.append(line)
     return keep
+
+
+def _block(text, i):
+    """The s-expression starting at text[i] ('('), as text; '' if i < 0."""
+    if i < 0:
+        return ''
+    depth = 0
+    for j in range(i, len(text)):
+        depth += {'(': 1, ')': -1}.get(text[j], 0)
+        if depth == 0:
+            return text[i:j + 1]
+    return text[i:]
+
+
+def board_stack(text):
+    """The board's thickness, copper layer count and dielectrics from a .kicad_pcb text, by the rules
+    extract_antenna.py models it with: {'thick': mm, 'ncu': n, 'diel': [(mm, [epsR], [tanD], material)],
+    'stackup': set in the file, 'default': it is KiCad's default 2-layer stackup (written on save, never set)}."""
+    head = _block(text, text.find('(general'))
+    m = re.search(r'\(thickness ([\d.]+)', head)
+    ncu = len(re.findall(r'"[^"]*\.Cu"', _block(text, text.find('(layers'))))
+    st = _block(text, text.find('(stackup'))
+    diel = []
+    for m2 in re.finditer(r'\(layer "dielectric[^"]*"', st):
+        b = _block(st, m2.start())
+        if 'mask' in b.lower():
+            continue
+        num = lambda k: [float(v) for v in re.findall(r'\(%s ([\d.eE+-]+)' % k, b)]
+        mat = re.search(r'\(material "([^"]*)"', b)
+        diel.append((sum(num('thickness')), num('epsilon_r') or [4.5], num('loss_tangent') or [0.02], mat.group(1) if mat else ''))
+    thick = float(m.group(1)) if m else 1.6
+    return {'thick': thick, 'ncu': ncu or 2, 'diel': diel, 'stackup': bool(st),
+            'default': [(round(t, 4), e, d) for t, e, d, _ in diel] == [(1.51, [4.5], [0.02])]}
+
+
+def board_line(info, short=False, uni=True):
+    """'1.6 mm, 2 copper layers, FR4 εr 4.5, tanδ 0.02' and a warning when the stackup was never set;
+    short: '1.6 mm FR4 εr 4.5' for a plot heading; uni=False writes epsR / tanD (Octave, the summary)."""
+    er, td = ('εr', 'tanδ') if uni else ('epsR', 'tanD')
+    span = lambda v: ('%g' % min(v)) if max(v) - min(v) < 1e-9 else '%g-%g' % (min(v), max(v))
+    ers = [e for d in info['diel'] for e in d[1]] or [4.5]
+    tds = [t for d in info['diel'] for t in d[2]] or [0.02]
+    mat = '/'.join(dict.fromkeys(d[3] for d in info['diel'] if d[3]))
+    if short:
+        return '%g mm %s%s %s' % (info['thick'], mat + ' ' if mat else '', er, span(ers))
+    line = '%g mm, %d copper layers, %s%s %s, %s %s' % (info['thick'], info['ncu'], mat + ' ' if mat else '', er, span(ers),
+                                                       td, span(tds))
+    if not info['stackup']:
+        return line + ' (no stackup set, assumed: set it in Board Setup > Physical Stackup)'
+    if info['default']:
+        return line + " (KiCad's default stackup: check it in Board Setup > Physical Stackup)"
+    return line
+
+
+def board_file_line(path):
+    """board_line() of a saved board file, '' if it cannot be read."""
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            return board_line(board_stack(f.read()))
+    except OSError:
+        return ''
 
 
 def failure_line(lines):

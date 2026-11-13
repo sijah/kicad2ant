@@ -26,7 +26,7 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.6'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.7'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
@@ -197,6 +197,16 @@ class Kicad2antDialog(wx.Dialog):
         feed_row.Add(self.feed_txt, 1, wx.ALIGN_CENTER_VERTICAL)
         feed_row.Add(use_sel, 0, wx.LEFT, 6)
         feed_row.Add(auto, 0, wx.LEFT, 4)
+        self.board_txt, self.board_warn, self.board_seen = wx.StaticText(run, label=''), wx.StaticText(run, label=''), None
+        for t in (self.board_txt, self.board_warn):
+            t.SetToolTip('Read from the board file as saved: save the board after changing its stackup '
+                         '(Board Setup > Physical Stackup). Thickness and εr move the resonance.')
+        board_col = wx.BoxSizer(wx.VERTICAL)
+        board_col.Add(self.board_txt)
+        board_col.Add(self.board_warn)   # a stackup never set: on its own line, in the warning colour
+        board_row = wx.BoxSizer(wx.HORIZONTAL)
+        board_row.Add(wx.StaticText(run, label='PCB'), 0, wx.RIGHT, 8)
+        board_row.Add(board_col, 1)
 
         self.case_ctl = wx.Choice(run, choices=['Air (bare board)', 'Plastic case'])
         self.case_ctl.SetSelection(1 if s['case'] else 0)
@@ -278,7 +288,7 @@ class Kicad2antDialog(wx.Dialog):
         root = wx.BoxSizer(wx.VERTICAL)
         root.Add(grid, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         root.Add(self.mode_help, 0, wx.ALL, 10)
-        for row in (feed_row, case_row, sim_row):
+        for row in (feed_row, board_row, case_row, sim_row):
             root.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(self.view, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
@@ -432,7 +442,9 @@ class Kicad2antDialog(wx.Dialog):
         self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_SIZE, self.on_size)
-        self.Bind(wx.EVT_ACTIVATE, lambda e: (self.feed is None and e.GetActive() and self.set_feed(None), e.Skip()))
+        self.Bind(wx.EVT_ACTIVATE, lambda e: (e.GetActive() and self.show_board(), self.feed is None and e.GetActive()
+                                              and self.set_feed(None), e.Skip()))
+        self.show_board()
         self.Bind(wx.EVT_WINDOW_DESTROY, self.on_destroy)
         self.show_previous()
 
@@ -583,6 +595,7 @@ class Kicad2antDialog(wx.Dialog):
             w.Refresh()   # on Windows a page's labels keep their old colours until repainted
         if self.failed:
             self.summary.SetForegroundColour(wx.Colour(240, 90, 90) if dark else wx.Colour(170, 20, 20))
+        self.board_warn.SetForegroundColour(wx.Colour(240, 170, 60) if dark else wx.Colour(170, 90, 0))
         self.Refresh()
 
     def set_summary(self, text, failed=False):
@@ -619,6 +632,21 @@ class Kicad2antDialog(wx.Dialog):
                     if ref else 'Auto finds %s: select the feed pad and press Use selected pad' % why)
         self.feed_txt.SetLabel(text)
         self.Layout()
+
+    def show_board(self):
+        """The Run tab's Board line: thickness, layers, εr of the saved board file, read again only when it changed."""
+        path = pcbnew.GetBoard().GetFileName()
+        try:
+            seen = (path, os.path.getmtime(path))
+        except OSError:
+            seen = (path, None)
+        if seen != self.board_seen:
+            self.board_seen = seen
+            line, _, warn = (core.board_file_line(path) or 'not saved yet').partition(' (')
+            self.board_txt.SetLabel(line)
+            self.board_warn.SetLabel(warn.rstrip(')'))
+            self.board_warn.Show(bool(warn))
+            self.Layout()
 
     def on_use_selected(self, _):
         hit = selected_feed()

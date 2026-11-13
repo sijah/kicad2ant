@@ -1,5 +1,18 @@
 # Changelog — kicad2ant
 
+## v0.3.7 (2026-11-13)
+
+### Added
+- Board thickness shown in three places:
+  - Plugin Run tab: a **PCB** line with the thickness, copper layer count, material, εr and tanδ read from the
+    saved board. A warning line under it when the board has no stackup (values assumed) or only KiCad's default
+    one (1.51 mm FR4 εr 4.5, written on save even when never set).
+  - Results summary: `board: 0.8 mm, 2 copper layers, FR4 epsR 4.4, tanD 0.02` (shown in the Results tab).
+  - Plot heading, on every PNG: `project | REF mode | 0.8 mm FR4 epsR 4.4`.
+
+### Changed
+- The summary's old `board:` line (copper sheets, modelled dielectric height, ground, port) is now `model:`.
+
 ## v0.3.6 (2026-11-13)
 
 ### Fixed

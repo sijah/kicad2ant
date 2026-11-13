@@ -162,6 +162,11 @@ KiCad plans to drop the SWIG runtime in KiCad 11, so this version targets KiCad 
 The antenna has to be a footprint, either from KiCad's `RF_Antenna` library or one of your own. Open the board
 and click the kicad2ant button. The window stays open next to the editor.
 
+Check the **PCB** line on the Run tab first: the board thickness, copper layers, εr and tanδ the simulation will
+use, read from the saved board's stackup. Thickness and εr move the resonance a lot. If it says *no stackup set*
+or *KiCad's default stackup*, enter your fab's stackup in **Board Setup > Physical Stackup** and save. The same
+line is in the results summary, and the plots carry it in their heading (e.g. `0.8 mm FR4 epsR 4.4`).
+
 1. Set **Mode** to *Check model* and click **Simulate**. A few seconds later you'll see the model, with the
    ground in grey, the antenna in orange and the port in magenta. Make sure the port is on the feed pad and the
    ground is where you expect. It's worth doing this every time.

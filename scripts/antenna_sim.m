@@ -50,7 +50,9 @@ name = regexprep(geom.ref, '[^\w-]', '_');
 % every picture gets the project and the run as a heading, and the software and date as a grey mark
 if ~exist('project', 'var'), project = ''; end
 if ~exist('k2a_ver', 'var'), k2a_ver = ''; end
-heading = strjoin([{project}(~isempty(project)), {sprintf('%s  %s', geom.ref, res)}], '  |  ');
+if ~exist('board_txt', 'var'), board_txt = ''; end      % '1.6 mm, 2 copper layers, FR4 epsR 4.5, tanD 0.02' (kicad2ant.py)
+if ~exist('board_short', 'var'), board_short = ''; end  % '1.6 mm FR4 epsR 4.5', in the heading
+heading = strjoin([{project}(~isempty(project)), {sprintf('%s  %s', geom.ref, res)}, {board_short}(~isempty(board_short))], '  |  ');
 mark = sprintf('kicad2ant %s  |  openEMS FDTD  |  %s', k2a_ver, datestr(now, 'yyyy-mm-dd HH:MM'));
 % stamp(h, y): the heading at height y (0.96 top; the small model picture has no room above its titles: 0.03,
 % just over the mark), the mark at the bottom left
@@ -274,7 +276,8 @@ end
 fid = fopen(files{1}, 'w'); assert(fid > 0, 'cannot write %s', files{1});
 for fd = [1 fid]
   fprintf(fd, '%s %s run (%.0f s, %d x %d x %d cells, smallest %.3f mm)\n', name, res, t_run, numel(mesh.x), numel(mesh.y), numel(mesh.z), dmin);
-  fprintf(fd, 'board: %d copper layers, %.3f mm, epsR %s; ground %s; port %s\n', numel(geom.cu_z), zmax, ...
+  if ~isempty(board_txt), fprintf(fd, 'board: %s\n', board_txt); end
+  fprintf(fd, 'model: %d copper sheets over %.3f mm of dielectric, epsR %s; ground %s; port %s\n', numel(geom.cu_z), zmax, ...
           mat2str(round(geom.diel(:, 3)' * 100) / 100), geom.gnd_net, geom.port_kind);
   if isempty(case_box), fprintf(fd, 'case: none, the board in air\n');
   else, fprintf(fd, 'case: plastic epsR %.3g tanD %.3g, wall %.3g mm, gap side %.3g top %.3g bottom %.3g mm\n', case_box); end

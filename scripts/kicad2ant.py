@@ -14,7 +14,7 @@ import argparse, glob, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
-VERSION = '0.3.6'   # on every plot; build_pcm.py checks it against metadata.json
+VERSION = '0.3.7'   # on every plot; build_pcm.py checks it against metadata.json
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('board', nargs='?'); ap.add_argument('ref', nargs='?', default='auto')
 ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fast',
@@ -143,6 +143,9 @@ q = lambda s: s.replace("'", "''")
 shutil.copy(os.path.join(HERE, 'antenna_sim.m'), out)
 # the plot heading: the run folder's name without _kicad2ant (the plugin's board copy is always board.kicad_pcb)
 project = re.sub(r'_kicad2ant$', '', os.path.basename(out)) or os.path.splitext(os.path.basename(board))[0]
+with open(board, encoding='utf-8', errors='replace') as f:   # thickness, layers, epsR for the summary and the plot heading
+    stack = core.board_stack(f.read())
+board_txt, board_short = core.board_line(stack, uni=False), core.board_line(stack, short=True, uni=False)
 with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
     f.write(f"% kicad2ant: this run's settings. In Octave, run this file to run it again.\n"
             f"% dry_run=1 builds the model only; skip_fdtd=1 redoes only the post-processing.\n"
@@ -152,6 +155,7 @@ with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
             f"threads={S['threads']}; pattern={S['pattern']}; f_pat={S['f_pat'] * 1e6:.8g}; pat_step={S['pat_step']:g};\n"
             f"run_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"
             f"project='{q(project)}'; k2a_ver='{VERSION}';\n"
+            f"board_txt='{q(board_txt)}'; board_short='{q(board_short)}';\n"
             f"run(fullfile(run_dir, 'antenna_sim.m'))\n")
 script = f"run('{q(os.path.join(out, 'run_sim.m'))}')"
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display
