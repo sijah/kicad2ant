@@ -16,7 +16,16 @@ if ~exist('skip_fdtd', 'var'), skip_fdtd = 0; end   % 1 = re-run post-processing
 if ~exist('dry_run', 'var'), dry_run = 0; end       % 1 = build the model, write the XML and geometry plot, stop
 if ~exist('run_dir', 'var'), run_dir = pwd; end     % holds antenna_geom.m; sim_<res>/ and results/ go here
 if ~exist('f0', 'var'), f0 = 2.44e9; end            % design frequency (Hz)
-if ~exist('fc', 'var'), fc = 0.4 * f0; end          % reported band f0 -/+ fc
+if ~exist('fc', 'var'), fc = 0.4 * f0; end          % sweep f0 -/+ fc, unless f_lo / f_hi are given
+if ~exist('f_lo', 'var'), f_lo = f0 - fc; end       % sweep start and stop (Hz); kicad2ant.py --set f_start / f_stop
+if ~exist('f_hi', 'var'), f_hi = f0 + fc; end
+fc = (f_hi - f_lo) / 2;
+% the run settings kicad2ant.py writes into run_sim.m (mesher.py MODES, --set): these defaults are for a run by hand
+if ~exist('npts', 'var'), npts = 801; end            % sweep points
+if ~exist('nrts', 'var'), nrts = 300000; end         % step limit: a run that hits it did not converge (warned in the summary)
+if ~exist('threads', 'var'), threads = 0; end        % openEMS threads, 0 = all
+if ~exist('f_pat', 'var'), f_pat = 0; end            % pattern frequency (Hz), 0 = the resonance
+if ~exist('pat_step', 'var'), pat_step = 5; end      % full-sphere far-field step (deg)
 if ~exist('band_t', 'var'), band_t = [2400 2483.5] * 1e6; end   % target band: marked on plots, checked in the summary
 % plastic case: a box shell around the board [epsR tanD wall gap_side gap_top gap_bottom], mm, top = the F.Cu side;
 % [] = the bare board in air
@@ -41,16 +50,16 @@ name = regexprep(geom.ref, '[^\w-]', '_');
 
 %% parameters
 % the mesh itself is mesher.py's (cells per mode there)
-if strcmp(res, 'fine'), end_crit = 1e-5; else, end_crit = 1e-4; end
+if ~exist('end_crit', 'var'), end_crit = 10^(-4 - strcmp(res, 'fine') + strcmp(res, 'fast')); end   % -30 / -40 / -50 dB
 % fast: S11 only. Larger cells (mesher.py), -30 dB, no far field. Same PML and lambda/4 air as coarse: MUR with
 % lambda/8 air was 2.5 % off on the printed IFA and gave -9 dB for -21 dB on AN043
-fast = strcmp(res, 'fast'); if fast, end_crit = 1e-3; end
+fast = strcmp(res, 'fast');
+if ~exist('pattern', 'var'), pattern = ~fast; end    % far field: gain, efficiency, pattern
 % the excitation reaches 30 % of the band past its top: the far field comes out wrong near the
 % upper edge of the Gaussian's band while S11 still looks fine (kicad2ems, docs/maintenance.md)
-f_ex = f0 + 0.3 * fc; fc_ex = 1.3 * fc;
+f_ex = (f_lo + f_hi) / 2 + 0.3 * fc; fc_ex = 1.3 * fc;
 
 %% model
-nrts = 300000;                     % step limit: a run that hits it did not converge (warned in the summary)
 FDTD = InitFDTD('NrTS', nrts, 'EndCriteria', end_crit);
 FDTD = SetGaussExcite(FDTD, f_ex, fc_ex);
 FDTD = SetBoundaryCond(FDTD, {'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8' 'PML_8'});
@@ -111,7 +120,7 @@ fprintf('%s mesh: %d x %d x %d = %.2f Mcells, smallest cell %.3f mm, worst neigh
 % NF2FF box one cell inside the PML (lines 1..9 are its 8 cells), around the board and case (it must not cut the
 % dielectric). 4 cells in was tried on AN043: D 2.47 dBi / eff 76 % against the reference's 2.13 / 90 %, which this gives
 nb = [mesh.x(10) mesh.y(10) mesh.z(10) mesh.x(end-9) mesh.y(end-9) mesh.z(end-9)];
-if ~fast
+if pattern
   assert(all(nb(1:3) < co(1:3)) && all(nb(4:6) > co(4:6)), 'NF2FF box cuts the board or case: too little air (mesher.py)');
   [CSX, nf2ff] = CreateNF2FFBox(CSX, 'nf2ff', nb(1:3), nb(4:6));
 end
@@ -138,7 +147,7 @@ print(h, fullfile(out, [name '_geometry.png']), '-dpng', '-r100');
 
 %% run
 Sim_Path = fullfile(here, ['sim_' res]); Sim_CSX = 'antenna.xml';
-P = struct('geom', geom, 'f0', f0, 'fc', fc, 'f_ex', f_ex, 'fc_ex', fc_ex, 'mesh', mesh, 'end_crit', end_crit);
+P = struct('geom', geom, 'f0', f0, 'fc', fc, 'f_ex', f_ex, 'fc_ex', fc_ex, 'mesh', mesh, 'end_crit', end_crit, 'pattern', pattern);
 pfile = fullfile(Sim_Path, 'params.mat');
 files = {fullfile(out, [name '_' res '_summary.txt']), fullfile(out, [name '_' res '.s1p'])};
 old = dir(files{2});   % keep the result this run replaces in history/, named by when it was made, for the overlay
@@ -162,7 +171,7 @@ if ~skip_fdtd
   save(pfile, 'P', '-mat');
   % on Windows RunOpenEMS writes a log only when silent; the log is how we know the run converged
   fprintf('openEMS running, progress in %s\n', fullfile(Sim_Path, 'openEMS.log'));
-  tic; RunOpenEMS(Sim_Path, Sim_CSX, '', struct('LogFile', 'openEMS.log', 'Silent', 1)); t_run = toc;
+  tic; RunOpenEMS(Sim_Path, Sim_CSX, repmat(sprintf('--numThreads=%d', threads), 1, threads > 0), struct('LogFile', 'openEMS.log', 'Silent', 1)); t_run = toc;
 else
   % the port and NF2FF box are rebuilt from the current board and parameters: they must match the saved fields
   assert(exist(pfile, 'file') == 2, 'no params.mat in %s: re-run the FDTD', Sim_Path);
@@ -207,7 +216,7 @@ for q = 1:numel(mf)
 end
 
 %% results: match
-freq = linspace(f0 - fc, f0 + fc, 801);
+freq = linspace(f_lo, f_hi, npts);
 port = calcPort(port, Sim_Path, freq);
 s11 = port.uf.ref ./ port.uf.inc; Zin = port.uf.tot ./ port.if.tot;
 s11dB = 20*log10(abs(s11));
@@ -234,15 +243,15 @@ ix = find(diff(sign(imag(Zin))) ~= 0);              % reactance zero crossings
 f_x = freq(ix) - imag(Zin(ix)) .* (freq(ix+1) - freq(ix)) ./ (imag(Zin(ix+1)) - imag(Zin(ix)));
 
 %% results: far field over frequency (coarse full sphere), pattern at the resonance (not in fast)
-if ~fast
-ffr =unique([linspace(f0 - fc, f0 + fc, 11), f0, f_res]);
+if pattern
+if f_pat > 0, fp = f_pat; elseif at_edge, fp = f0; else, fp = f_res; end   % a minimum at the sweep edge is not a resonance
+ffr = unique([linspace(f_lo, f_hi, 11), f0, fp]);
 pf = calcPort(port, Sim_Path, ffr);
-th = 0:5:180; ph = 0:5:355;
+th = 0:pat_step:180; ph = 0:pat_step:360 - pat_step;
 sph = CalcNF2FF(nf2ff, Sim_Path, ffr, th*pi/180, ph*pi/180, 'Outfile', 'ff_sphere.h5', 'Mode', 1);
 D = sph.Dmax(:)'; eff = sph.Prad(:)' ./ pf.P_acc(:)'; reff = sph.Prad(:)' ./ pf.P_inc(:)';
 s11f = 20*log10(abs(pf.uf.ref ./ pf.uf.inc));
-if at_edge, f_pat = f0; else, f_pat = f_res; end   % a minimum at the sweep edge is not a resonance
-[~, ip] = min(abs(ffr - f_pat));
+[~, ip] = min(abs(ffr - fp));
 emax = max(sph.E_norm{ip}(:));
 tc = -180:2:180;
 cut = CalcNF2FF(nf2ff, Sim_Path, ffr(ip), tc*pi/180, [0 90]*pi/180, 'Outfile', 'ff_cuts.h5', 'Mode', 1);
@@ -258,7 +267,7 @@ for fd = [1 fid]
           mat2str(round(geom.diel(:, 3)' * 100) / 100), geom.gnd_net, geom.port_kind);
   if isempty(case_box), fprintf(fd, 'case: none, the board in air\n');
   else, fprintf(fd, 'case: plastic epsR %.3g tanD %.3g, wall %.3g mm, gap side %.3g top %.3g bottom %.3g mm\n', case_box); end
-  if fast, fprintf(fd, 'fast (S11 only, no far field): confirm with coarse\n'); end
+  if ~pattern, fprintf(fd, '%s (S11 only, no far field): confirm with coarse\n', res); end
   if at_edge
     fprintf(fd, 'min S11 %.1f dB at %.0f MHz = SWEEP EDGE: no resonance in %.0f..%.0f MHz (retune, or widen fc)\n', s_min, f_res/1e6, freq(1)/1e6, freq(end)/1e6);
   else
@@ -276,7 +285,7 @@ for fd = [1 fid]
   for q = 1:numel(M)
     fprintf(fd, '%s: min S11 %.1f dB at %.0f MHz, %+.0f MHz from the simulation\n', M{q}.name, M{q}.min, M{q}.fmin/1e6, (M{q}.fmin - f_res)/1e6);
   end
-  if fast, continue; end
+  if ~pattern, continue; end
   fprintf(fd, '   f MHz  S11 dB   D dBi  rad eff %%  gain dBi  realized gain dBi\n');
   for k = 1:numel(ffr)
     flag = ''; if s11f(k) > -3, flag = '  (mismatched: rad eff is rough)'; end
@@ -337,7 +346,7 @@ title({sprintf('%s %s: S11 %.0f..%.0f MHz', name, res, freq(1)/1e6, freq(end)/1e
        sprintf('red = %.0f MHz, blue = target band edges', f0/1e6)});
 print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r200');
 
-if fast, return; end
+if ~pattern, return; end
 h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 6]);
 set(h, 'defaultaxesfontsize', 12, 'defaulttextfontsize', 12);
 plot(tc,dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB(cxy.E_norm{1}), 'k:', 'LineWidth', 2.5);

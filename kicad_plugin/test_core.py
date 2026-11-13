@@ -75,6 +75,13 @@ def test_case():
     assert '--case' not in core.build_cmd('py', 'k.py', 'b', 'o', 'fast')
 
 
+def test_sim_sets():
+    d = {'cell': 0.5, 'end_db': -30.0, 'pattern': 0}
+    assert core.sim_sets({'cell': '0.5', 'end_db': '-40', 'pattern': '1'}, d) == ['end_db=-40', 'pattern=1']
+    assert core.sim_sets({'cell': '0.50', 'end_db': '-30', 'pattern': '0'}, d) == []
+    assert core.build_cmd('py', 'k.py', 'b', 'o', 'fast', sets=['cell=0.2'], view=True)[-3:] == ['--set', 'cell=0.2', '--view']
+
+
 def test_summary_lines_real():
     assert core.summary_lines(REAL) == [
         'resonance (min S11) -9.2 dB at 2413 MHz', 'no -10 dB band',

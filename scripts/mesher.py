@@ -14,10 +14,38 @@ import math
 C0 = 299792458.0
 RATIO = 1.3
 MERGE = 0.05    # mm: copper edges closer than this get one line (a commercial EM tool's default); smaller cells shrink the timestep
-# cell: largest cell over the antenna (mm); nmin: least cells across any gap there; nz: least cells through a dielectric
-MODES = {'fast':   dict(cell=0.5,  nmin=2, air_div=15, nz=2),
-         'coarse': dict(cell=0.25, nmin=3, air_div=15, nz=4),
-         'fine':   dict(cell=0.15, nmin=4, air_div=20, nz=4)}
+# Every run setting, per mode: the plugin's Simulation tab shows these, --set KEY=VALUE overrides one.
+# mesh (here): cell: largest cell over the antenna (mm); nmin: least cells across any gap there; nz: least cells
+# through a dielectric; merge: copper edges closer than this get one line (mm); ratio: largest neighbour cell ratio;
+# air: air around the board (mm, 0 = max(5 mm, lambda/4)); f_start / f_stop: the sweep (MHz, 0 = f0 -/+ 40 %).
+# run (antenna_sim.m): npts: sweep points; nrts: step limit; end_db: openEMS end criterion (always PML_8: MUR was 2.5 % off);
+# threads: openEMS threads (0 = all); pattern: far field (gain, efficiency, pattern); f_pat: pattern frequency (MHz,
+# 0 = the resonance); pat_step: full-sphere step (deg)
+_RUN = dict(merge=MERGE, ratio=RATIO, air=0.0, f_start=0.0, f_stop=0.0, npts=801, nrts=300000, threads=0,
+            f_pat=0.0, pat_step=5.0)
+MODES = {'fast':   dict(_RUN, cell=0.5,  nmin=2, air_div=15, nz=2, end_db=-30.0, pattern=0),
+         'coarse': dict(_RUN, cell=0.25, nmin=3, air_div=15, nz=4, end_db=-40.0, pattern=1),
+         'fine':   dict(_RUN, cell=0.15, nmin=4, air_div=20, nz=4, end_db=-50.0, pattern=1)}
+
+
+def settings(mode, sets=()):
+    """The mode's settings with the KEY=VALUE overrides in sets. ValueError on an unknown key or a bad value."""
+    m = dict(MODES[mode])
+    for kv in sets:
+        k, _, v = kv.partition('=')
+        if k not in m: raise ValueError(f'unknown setting {k} (known: {", ".join(sorted(m))})')
+        m[k] = type(m[k])(float(v))
+    ok = (m['cell'] > 0 and m['nmin'] >= 1 and m['nz'] >= 1 and m['merge'] >= 0 and m['ratio'] > 1 and m['air'] >= 0
+          and m['npts'] >= 2 and m['nrts'] >= 1 and m['end_db'] < 0 and m['threads'] >= 0 and m['pat_step'] > 0
+          and m['pattern'] in (0, 1) and m['f_start'] >= 0 and m['f_pat'] >= 0
+          and (m['f_stop'] == 0 or m['f_stop'] > m['f_start']))
+    if not ok: raise ValueError(f'bad setting in {" ".join(sets)}')
+    return m
+
+
+def sweep(m, f0):
+    """(start, stop) of the sweep, Hz: f0 -/+ 40 % unless set."""
+    return (m['f_start'] * 1e6 or f0 * 0.6), (m['f_stop'] * 1e6 or f0 * 1.4)
 
 
 def fill(a, b, s0, s1, smax, r=RATIO):
@@ -41,7 +69,7 @@ def fill(a, b, s0, s1, smax, r=RATIO):
     return out
 
 
-def axis(keep, edges, other, sizes, merge):
+def axis(keep, edges, other, sizes, merge, r=RATIO):
     """Grid lines on one axis. keep: lines that never move (port planes); edges: copper edges, wanted exactly;
     other: further lines wanted exactly (vias, hints, region and domain limits); sizes(a, b) -> (largest cell,
     least cells) for the gap a..b. The least cells count across the span between the copper edges around a gap,
@@ -63,14 +91,14 @@ def axis(keep, edges, other, sizes, merge):
         lo = max([e for e in E if e <= a + 1e-9], default=None)
         hi = min([e for e in E if e >= b - 1e-9], default=None)
         if lo is not None and hi is not None: c = min(c, (hi - lo) / n)   # a trace or gap: at least n cells across
-        c = min(c, b - a)
+        c = min(max(c, merge), b - a)   # never below the merge distance: a 0.07 mm pad-to-trace step got 0.024 mm cells (AN1088)
         s.append((b - a) / math.ceil((b - a) / c - 1e-9))   # the cell that fits whole: what the neighbours really meet
     # the cell at each line: no bigger than a small cell elsewhere can grow to by then (cells grow by RATIO, so
     # about (RATIO - 1) * distance), so a short gap next to fine cells never has to end on a big cell
-    h = [min(sj + (RATIO - 1) * 0.9 * max(0.0, a - x, x - b) for sj, (a, b) in zip(s, gaps)) for x in H]
+    h = [min(sj + (r - 1) * 0.9 * max(0.0, a - x, x - b) for sj, (a, b) in zip(s, gaps)) for x in H]
     out = list(H)
     for i, (a, b) in enumerate(gaps):
-        out += fill(a, b, min(s[i], h[i]), min(s[i], h[i + 1]), s[i])
+        out += fill(a, b, min(s[i], h[i]), min(s[i], h[i + 1]), s[i], r)
     return repair(sorted(out))
 
 
@@ -130,13 +158,13 @@ def check(grid, port, cu_z, diel, tol=1e-4):
     return bad
 
 
-def build(mode, f0, ant_box, edges, hints, port, port_gnd, vias, outline, cu_z, diel, case=None):
+def build(mode, f0, ant_box, edges, hints, port, port_gnd, vias, outline, cu_z, diel, case=None, sets=()):
     """x, y, z grid lines (mm), before the PML cells antenna_sim.m adds. edges/hints/port_gnd: per axis (x, y)
     lists of coordinates; vias: (x, y); outline: ring of (x, y); diel: (z0, z1, epsR, tand); case: the six
-    case_box values or None. Must agree with antenna_sim.m: fc = 0.4 f0 there, air lambda/4 in every mode."""
-    m = MODES[mode]
-    lam = C0 / (1.4 * f0) * 1e3                      # shortest wavelength of the sweep, f0 + fc
-    air = max(5.0, C0 / f0 * 1e3 / 4)   # fast had lambda/8 and MUR: 2.5 % off on the printed IFA, -9 dB on AN043
+    case_box values or None; sets: KEY=VALUE overrides (settings()). The sweep must agree with antenna_sim.m's."""
+    m = settings(mode, sets)
+    lam = C0 / sweep(m, f0)[1] * 1e3                 # shortest wavelength of the sweep
+    air = m['air'] or max(5.0, C0 / f0 * 1e3 / 4)   # fast had lambda/8 and MUR: 2.5 % off on the printed IFA, -9 dB on AN043
     dmax = lam / m['air_div']
     d_sub = lam / math.sqrt(max(d[2] for d in diel)) / m['air_div']
     zmax = max(cu_z)
@@ -161,7 +189,7 @@ def build(mode, f0, ant_box, edges, hints, port, port_gnd, vias, outline, cu_z, 
         keep = [port[a], port[a + 3]]       # the line port at the pad centre snaps to the nearest line
         other = (list(hints[a]) + [(port[a] + port[a + 3]) / 2] + [v[a] for v in vias if ar[0] <= v[0] <= ar[2] and ar[1] <= v[1] <= ar[3]]
                  + [ar[a], ar[a + 2], bb[a], bb[a + 2], gb[a], gb[a + 3]] + cl[a] + [co[a] - air, co[a + 3] + air])
-        out[k] = axis(keep, list(edges[a]) + list(port_gnd[a]), other, lambda lo, hi, a=a: sizes_xy(a, lo, hi), MERGE)
+        out[k] = axis(keep, list(edges[a]) + list(port_gnd[a]), other, lambda lo, hi, a=a: sizes_xy(a, lo, hi), m['merge'], m['ratio'])
 
     def sizes_z(lo, hi):
         mid = (lo + hi) / 2
@@ -170,5 +198,5 @@ def build(mode, f0, ant_box, edges, hints, port, port_gnd, vias, outline, cu_z, 
         if gb[2] <= mid <= gb[5]: return dg, 1
         return dmax, 1
     hz = list(cu_z) + [d[0] for d in diel] + [d[1] for d in diel] + cl[2] + [co[2] - air, co[5] + air]
-    out['z'] = axis([], [], hz, sizes_z, min(d[1] - d[0] for d in diel) / 20)
+    out['z'] = axis([], [], hz, sizes_z, min(d[1] - d[0] for d in diel) / 20, m['ratio'])
     return out

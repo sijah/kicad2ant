@@ -31,3 +31,4 @@ dist/
 *.zip
 metadata_gitlab_submission.json
 .superpowers/
+examples/private/

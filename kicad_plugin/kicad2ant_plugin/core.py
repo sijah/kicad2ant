@@ -67,7 +67,22 @@ def case_args(values):
     return ['%g' % x for x in v]
 
 
-def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd='', view=False, case=()):
+# the Simulation tab: (mesher.py MODES key, label); the pattern checkbox is the key 'pattern'
+SIM_FIELDS = [('f_start', 'Sweep start (MHz, 0 = f0 - 40 %)'), ('f_stop', 'Sweep stop (MHz, 0 = f0 + 40 %)'),
+              ('npts', 'Frequency points'), ('cell', 'Largest cell on the antenna (mm)'),
+              ('nmin', 'Least cells across a trace or gap'), ('merge', 'Merge mesh lines closer than (mm)'),
+              ('nz', 'Least cells through the substrate'), ('ratio', 'Mesh grading ratio'),
+              ('air', 'Air around the board (mm, 0 = max(5 mm, λ/4))'), ('nrts', 'Max timesteps'),
+              ('end_db', 'End criterion (dB)'), ('threads', 'openEMS threads (0 = all)'),
+              ('f_pat', 'Pattern frequency (MHz, 0 = the resonance)'), ('pat_step', 'Pattern step (°)')]
+
+
+def sim_sets(values, defaults):
+    """The --set KEY=VALUE list for the fields that differ from the mode's values. ValueError on a non-number."""
+    return ['%s=%g' % (k, float(v)) for k, v in values.items() if float(v) != float(defaults[k])]
+
+
+def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd='', view=False, case=(), sets=()):
     cmd = [python, script, board_copy, ref or 'auto', '--mode', mode, '--out', out]
     if feed:
         cmd += ['--feed', feed]
@@ -79,6 +94,8 @@ def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='',
         cmd += ['--gnd', gnd]
     if case:   # plastic case: epsR, tanD, wall, gap side, top, bottom
         cmd += ['--case'] + list(case)
+    for kv in sets:   # run settings changed on the Simulation tab
+        cmd += ['--set', kv]
     if view:
         cmd.append('--view')
     return cmd

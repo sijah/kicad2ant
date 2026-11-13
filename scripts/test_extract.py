@@ -180,5 +180,15 @@ ring = '(xy 0 0.5) ' + ' '.join(f'(xy {x:.4f} {y:.4f})' for x, y in arc) + ' (xy
 r, t = extract(board().replace('(xy 0 0.5) (xy 10 0.5) (xy 10 1.5) (xy 0 1.5)', ring)); assert r.returncode == 0, r.stderr
 mx, my = get(t, 'mesh_x'), get(t, 'mesh_y')
 assert not any(10.3 < x < 10.6 for x in mx) and 10.615 in mx, mx   # was a line per facet; now only the far end
-assert -0.5 in my and -1.5 in my, my                                                      # the trace's straight edges (sim y = -KiCad y)
+assert -0.4 in my and -1.6 in my, my                    # the trace's straight edges, outside the 0.2 mm stroke (sim y = -KiCad y)
+assert -0.5 not in my and -1.5 not in my, my            # the fill's own edges lie under the stroke: copper on both sides
+# 15. run settings: a --set override reaches the mesh, a bad one is refused
+import mesher
+assert mesher.settings('fast', ['cell=0.2', 'nz=3'])['cell'] == 0.2 and mesher.settings('fast')['cell'] == 0.5
+for bad in (['bogus=1'], ['ratio=1'], ['end_db=5'], ['f_start=3000', 'f_stop=2000'], ['cell=x']):
+    try: mesher.settings('fast', bad); raise AssertionError(bad)
+    except ValueError: pass
+assert mesher.sweep(mesher.settings('coarse'), 2.44e9) == (2.44e9 * 0.6, 2.44e9 * 1.4)
+r0, t0 = extract(board()); r1, t1 = extract(board(), '--set', 'cell=0.2')
+assert r1.returncode == 0 and len(get(t1, 'grid_x')) > len(get(t0, 'grid_x')), r1.stderr
 print('OK')

@@ -15,7 +15,7 @@ except ImportError:   # loaded as a plain module (development)
 PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
 DEFAULTS = {'mode': 'fast', 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False,
-            'case': False, 'case_vals': [d for _, d in core.CASE_FIELDS]}
+            'case': False, 'case_vals': [d for _, d in core.CASE_FIELDS], 'sim_sets': []}
 LABELS = {'dry': 'Check model (seconds)', 'fast': 'Fast: S11 only (about a minute)',
           'coarse': 'Coarse: S11, gain, pattern (minutes)', 'fine': 'Fine: final numbers (much longer)'}
 MODES = [(LABELS[m], m) for m, _ in core.MODES]   # (label, mode) in list order
@@ -26,7 +26,7 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.2.0'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.1'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
@@ -37,6 +37,14 @@ def script_path():
     installed = os.path.join(PLUGIN_DIR, 'scripts', 'kicad2ant.py')
     return installed if os.path.isfile(installed) else \
         os.path.normpath(os.path.join(PLUGIN_DIR, '..', '..', 'scripts', 'kicad2ant.py'))
+
+
+sys.path.insert(0, os.path.dirname(script_path()))
+import mesher  # noqa: E402  the run settings of each mode, for the Simulation tab
+
+
+def mode_values(mode):
+    return mesher.MODES['coarse' if mode == 'dry' else mode]
 
 
 def load_settings():
@@ -109,6 +117,7 @@ class Kicad2antDialog(wx.Dialog):
         self.proc = None
         self.out = ''
         self.mode = 'fast'
+        self.target = None
         self.feed = None
         self.started = 0.0
         self.log_pos = 0
@@ -122,15 +131,18 @@ class Kicad2antDialog(wx.Dialog):
 
         self.book = wx.Notebook(self)
         run = wx.Panel(self.book)
+        sim = wx.ScrolledWindow(self.book)
         resp = wx.Panel(self.book)
         self.book.AddPage(run, 'Run')
+        self.book.AddPage(sim, 'Simulation')
         self.book.AddPage(resp, 'Results')
 
         self.mode_ctl = wx.Choice(run, choices=[m[0] for m in MODES])
         self.mode_ctl.SetSelection([m for _, m in MODES].index(core.mode_key(s['mode'])))
         self.mode_ctl.SetToolTip('\n'.join('%s: %s' % (label.split(':')[0].split(' (')[0], HELP[m]) for label, m in MODES))
         self.mode_help = wx.StaticText(run, label='')   # what the chosen mode does, in one line
-        self.mode_ctl.Bind(wx.EVT_CHOICE, lambda e: self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]]))
+        self.mode_ctl.Bind(wx.EVT_CHOICE, lambda e: (self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]]),
+                                                     self.fill_sim()))
         self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]])
         self.f0 = wx.TextCtrl(run, value=s['f0'], size=(70, -1))
         self.lo = wx.TextCtrl(run, value=s['lo'], size=(70, -1))
@@ -273,6 +285,32 @@ class Kicad2antDialog(wx.Dialog):
         res_box.Add(self.picture, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         resp.SetSizer(res_box)
 
+        # Simulation tab: the chosen mode's run settings (mesher.py MODES), each one can be changed
+        self.sim_note = wx.StaticText(sim, label='')
+        self.sim_ctl = {k: wx.TextCtrl(sim, size=(90, -1)) for k, _ in core.SIM_FIELDS}
+        self.pattern = wx.CheckBox(sim, label='compute (gain, efficiency, pattern: near-to-far field)')
+        sim_grid = wx.FlexGridSizer(0, 2, 6, 10)
+        for k, label in core.SIM_FIELDS:
+            if k == 'f_pat':
+                sim_grid.Add(wx.StaticText(sim, label='Radiation pattern'), 0, wx.ALIGN_CENTER_VERTICAL)
+                sim_grid.Add(self.pattern, 0, wx.ALIGN_CENTER_VERTICAL)
+            sim_grid.Add(wx.StaticText(sim, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            sim_grid.Add(self.sim_ctl[k], 0, wx.ALIGN_CENTER_VERTICAL)
+        reset = wx.Button(sim, label='Reset to the mode values')
+        reset.Bind(wx.EVT_BUTTON, lambda e: self.fill_sim())
+        sim_box = wx.BoxSizer(wx.VERTICAL)
+        sim_box.Add(self.sim_note, 0, wx.ALL, 10)
+        sim_box.Add(sim_grid, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        sim_box.Add(reset, 0, wx.LEFT | wx.BOTTOM, 10)
+        rules = wx.StaticText(sim, label='The board is always in PML_8 absorbers. Copper is zero-thickness PEC, ground vias PEC lines. '
+                                        'Smaller cells and a lower end criterion are more accurate and slower; '
+                                        'a run that hits Max timesteps did not converge.')
+        rules.Wrap(520)
+        sim_box.Add(rules, 0, wx.ALL, 10)
+        sim.SetSizer(sim_box)
+        sim.SetScrollRate(0, 10)
+        self.fill_sim(s['sim_sets'])
+
         top = wx.BoxSizer(wx.VERTICAL)
         top.Add(header, 0, wx.ALL, 10)
         top.Add(self.book, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
@@ -315,11 +353,40 @@ class Kicad2antDialog(wx.Dialog):
                 'openems': self.openems.GetValue().strip(), 'theme': self.theme_ctl.GetSelection(),
                 'outdir': self.outdir.GetValue().strip(), 'view': self.view.GetValue(),
                 'case': self.case_ctl.GetSelection() == 1, 'case_vals': [c.GetValue().strip() for c in self.case_vals],
+                'sim_sets': self.sim_sets_or_none(),
                 'size': None if self.IsMaximized() else list(self.GetSize())}
+
+    def fill_sim(self, sets=()):
+        """The Simulation tab shows the chosen mode's values, then the saved changes in sets (KEY=VALUE)."""
+        mode = MODES[self.mode_ctl.GetSelection()][1]
+        v = dict(mode_values(mode))
+        for kv in sets:
+            k, _, x = kv.partition('=')
+            if k in v:
+                v[k] = x
+        for k, c in self.sim_ctl.items():
+            c.SetValue('%g' % float(v[k]))
+        self.pattern.SetValue(bool(float(v['pattern'])))
+        self.sim_note.SetLabel('The values of the %s mode. Change any of them for your runs; changing the mode resets '
+                               'them.' % ('coarse' if mode == 'dry' else mode))
+
+    def sim_sets(self, mode):
+        """The changed run settings as KEY=VALUE; ValueError when one is not a number or out of range."""
+        vals = {k: c.GetValue().strip() for k, c in self.sim_ctl.items()}
+        vals['pattern'] = str(int(self.pattern.GetValue()))
+        sets = core.sim_sets(vals, mode_values(mode))
+        mesher.settings('coarse' if mode == 'dry' else mode, sets)   # the same check kicad2ant.py makes
+        return sets
 
     def enable_case(self):
         for c in self.case_vals:
             c.Enable(self.case_ctl.GetSelection() == 1)
+
+    def sim_sets_or_none(self):
+        try:
+            return self.sim_sets(MODES[self.mode_ctl.GetSelection()][1])
+        except ValueError:
+            return []
 
     def apply_theme(self):
         """System leaves every colour to KiCad / the OS; Light and Dark set them on the window and its controls."""
@@ -422,6 +489,13 @@ class Kicad2antDialog(wx.Dialog):
             except ValueError:
                 wx.MessageBox('Plastic case: εr is 1 or more, the wall more than 0 mm, tanδ and the gaps 0 or more.', TITLE)
                 return
+        try:
+            sets = self.sim_sets(mode)
+        except ValueError:
+            self.book.SetSelection(1)
+            wx.MessageBox('Simulation tab: every value must be a number. Cells, ratio above 1, points, steps and the '
+                          'pattern step above 0; end criterion below 0 dB; the sweep start below its stop.', TITLE)
+            return
         python = core.find_python()
         if not python:
             wx.MessageBox('Python 3 was not found: install it from python.org.', TITLE, wx.ICON_WARNING)
@@ -450,8 +524,9 @@ class Kicad2antDialog(wx.Dialog):
             self.set_feed(None)
         ref, num = self.feed if self.feed else ('auto', '')
         cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip(),
-                             self.view.GetValue(), case)
+                             self.view.GetValue(), case, sets)
         self.out, self.mode, self.started = out, mode, time.time()
+        self.target = None if mode == 'dry' else -float(self.sim_ctl['end_db'].GetValue())
         self.log_pos, self.log_rest, self.best, self.stopped = 0, '', 0.0, False
         self.log.Clear()
         self.add_log(' '.join(cmd))
@@ -518,7 +593,7 @@ class Kicad2antDialog(wx.Dialog):
             return
         lines = (self.log_rest + data.decode('utf-8', 'replace')).split('\n')
         self.log_rest = lines.pop()
-        target = core.TARGET_DB.get(self.mode)
+        target = self.target
         for line in lines:
             p = core.progress(line, target)
             if p is not None:

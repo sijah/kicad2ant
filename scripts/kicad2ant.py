@@ -2,7 +2,7 @@
 
   python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|fast|coarse|fine] [--f0 MHz] [--band LO HI]
                       [--feed PAD] [--gnd NET] [--case ER TAND WALL SIDE TOP BOTTOM] [--out DIR]
-                      [--post] [--view]
+                      [--set KEY=VALUE ...] [--post] [--view]
 
 REF is the antenna footprint (default: the one AE*/ANT* or RF_Antenna footprint). Results go to
 BOARD_kicad2ant/ next to the board (or --out): results/<REF>_<mode>_summary.txt and plots.
@@ -26,6 +26,10 @@ ap.add_argument('--case', type=float, nargs=6, metavar=('ER', 'TAND', 'WALL', 'S
                 help='plastic case, a box shell around the board: epsR, loss tangent, wall thickness and the gaps to the '
                      'board at the sides, top (F.Cu side) and bottom, mm; e.g. 3 0.01 2 1 1 1 for ABS. Default: the board in air')
 ap.add_argument('--out', help='run folder (default BOARD_kicad2ant next to the board); no spaces')
+ap.add_argument('--set', action='append', default=[], metavar='KEY=VALUE',
+                help='override one run setting of the mode, e.g. --set cell=0.2 --set end_db=-50; the keys and each '
+                     "mode's values are in mesher.py MODES (cell, nmin, nz, merge, ratio, air, f_start, f_stop, npts, "
+                     'nrts, end_db, threads, pattern, f_pat, pat_step)')
 ap.add_argument('--post', action='store_true', help='only redo the post-processing on the saved fields')
 ap.add_argument('--view', action='store_true', help="open the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
 a = ap.parse_args()
@@ -69,12 +73,20 @@ if a.f0 < 100 and a.mode != 'dry':
              'millions of steps and stop unconverged after hours. Not supported.')
 f0 = a.f0 * 1e6
 lo, hi = [b * 1e6 for b in a.band] if a.band else ((2400e6, 2483.5e6) if abs(f0 - 2.44e9) < 1e7 else (f0 * 0.98, f0 * 1.02))
+sys.path.insert(0, HERE)
+import mesher  # noqa: E402
+try:
+    S = mesher.settings('coarse' if a.mode == 'dry' else a.mode, a.set)
+    f_lo, f_hi = mesher.sweep(S, f0)
+    if f_lo >= f_hi: raise ValueError(f'sweep start {f_lo/1e6:g} MHz is not below its stop {f_hi/1e6:g} MHz')
+except ValueError as e: sys.exit(f'--set: {e}')
 if not a.band and a.f0 == 2440: print('target band 2400..2483.5 MHz (2.4 GHz ISM); give --f0 / --band for another', flush=True)
 
 if not a.post:
     cmd = [sys.executable, os.path.join(HERE, 'extract_antenna.py'), board, a.ref, os.path.join(out, 'antenna_geom.m')]
     cmd += ['--feed', a.feed] * bool(a.feed) + ['--gnd', a.gnd] * bool(a.gnd)
     cmd += ['--mode', 'coarse' if a.mode == 'dry' else a.mode, '--f0', str(a.f0)] + (['--case', *map(str, a.case)] if a.case else [])
+    cmd += [x for kv in a.set for x in ('--set', kv)]
     if subprocess.run(cmd).returncode: sys.exit(1)
 
 ems = openems()
@@ -86,7 +98,10 @@ with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
     f.write(f"% kicad2ant: this run's settings. In Octave, run this file to run it again.\n"
             f"% dry_run=1 builds the model only; skip_fdtd=1 redoes only the post-processing.\n"
             f"res='{'coarse' if a.mode == 'dry' else a.mode}'; dry_run={int(a.mode == 'dry')}; skip_fdtd={int(a.post)};\n"
-            f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}]; case_box=[{' '.join('%g' % v for v in a.case or [])}];\nrun_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"
+            f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}]; case_box=[{' '.join('%g' % v for v in a.case or [])}];\n"
+            f"f_lo={f_lo:.8g}; f_hi={f_hi:.8g}; npts={S['npts']}; nrts={S['nrts']}; end_crit={10 ** (S['end_db'] / 10):.6g}; "
+            f"threads={S['threads']}; pattern={S['pattern']}; f_pat={S['f_pat'] * 1e6:.8g}; pat_step={S['pat_step']:g};\n"
+            f"run_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"
             f"run(fullfile(run_dir, 'antenna_sim.m'))\n")
 script = f"run('{q(os.path.join(out, 'run_sim.m'))}')"
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display

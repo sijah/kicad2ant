@@ -1,6 +1,13 @@
 # Changelog — kicad2ant
 
-## Unreleased
+## v0.3.1 (2026-11-13)
+
+### Added
+- Plugin Simulation tab: the chosen mode's run settings (sweep, points, cell size, cells across traces and the
+  substrate, merge distance, grading, air, step limit, end criterion, threads, pattern on/off, frequency and step),
+  each one editable. The command line takes the same as `--set KEY=VALUE`; the values live in `mesher.py` MODES.
+
+## v0.3.0 (2026-11-13)
 
 ### Added
 - `scripts/fp2board.py`: puts an antenna footprint (`.kicad_mod`) on a bare board that kicad2ant can
@@ -9,6 +16,10 @@
 - The extractor reads board copper shapes on the ground net (`gr_poly` / `gr_rect` ... with a net) as ground.
 
 ### Changed
+- New mesher in Python (`scripts/mesher.py`): a line on every straight copper edge and port plane, at least
+  2/3/4 cells across each trace and gap (fast/coarse/fine), grading at 1.3, and a check that stops the run
+  when copper or the port is off the grid. The port is a line at the feed-pad centre.
+- Fast mode uses PML and λ/4 air like coarse (MUR with λ/8 was 2.5 % off).
 - The copper sheets lie on the faces of the stackup's dielectric, which keeps its own thickness. Before, each
   sheet sat at the middle of its copper layer, so a 0.73 mm dielectric was modelled 0.765 mm thick.
 - Mesh: lines come only from copper edges along x or y (within 5°), plus the antenna's extent, the port and the

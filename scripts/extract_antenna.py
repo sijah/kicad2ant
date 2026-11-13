@@ -22,6 +22,7 @@ ap.add_argument('--gnd', help='ground net (default: net of pad 2 of REF, else GN
 ap.add_argument('--mode', choices=('fast', 'coarse', 'fine'), default='coarse', help='mesh for this run mode (mesher.py)')
 ap.add_argument('--f0', type=float, default=2440, help='design frequency, MHz: sizes the mesh')
 ap.add_argument('--case', type=float, nargs=6, help='plastic case, as kicad2ant.py --case: the mesh covers it')
+ap.add_argument('--set', action='append', default=[], metavar='KEY=VALUE', help='override a mesh setting (mesher.MODES)')
 a = ap.parse_args()
 warn = lambda m: print('warning: ' + m, file=sys.stderr)
 
@@ -336,18 +337,25 @@ inbox = lambda p, m=3: box[0] - m <= p[0] <= box[2] + m and box[1] - m <= p[1] <
 def axis_lines(rings, near=lambda p: True):
     """Mesh lines from the copper edges that run along an axis (within 5 deg, at least 0.05 mm long): x lines
     from edges along y, y lines from edges along x. Diagonal and arc edges (and the little rectangles a stroked
-    outline is made of) give none: the cell_ant grid over the antenna resolves them (pcbmodelgen / kicad2ems)."""
+    outline is made of) give none: the cell_ant grid over the antenna resolves them (pcbmodelgen / kicad2ems).
+    rings: (layer, ring). An edge with copper of its layer on both sides (a pad inside a trace) is no edge."""
     xs, ys, t = set(), set(), math.tan(math.radians(5))
-    for r in rings:
+    for L, r in rings:
         for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]):
             dx, dy = abs(x2 - x1), abs(y2 - y1)
             if math.hypot(dx, dy) < 0.05 or not (near((x1, y1)) or near((x2, y2))): continue
+            n = 1e-3 / math.hypot(dx, dy); m = ((x1 + x2) / 2, (y1 + y2) / 2)
+            if all(any(inside((m[0] + s * (y2 - y1) * n, m[1] - s * (x2 - x1) * n), q) for l, q in rings if l == L)
+                   for s in (1, -1)): continue
             if dx <= t * dy: xs.add(round((x1 + x2) / 2, 3))
             if dy <= t * dx: ys.add(round((y1 + y2) / 2, 3))
     return xs, ys
-hx, hy = axis_lines([r for _, r in ant])
-gx, gy = axis_lines([r for _, r in fills], inbox)
-pts = [(box[0], box[1]), (box[2], box[3]), (port[0], port[1]), (port[3], port[4])] + [l[:2] for l in lines if inbox(l)]
+hx, hy = axis_lines(ant)
+gx, gy = axis_lines(fills, inbox)
+# the port as the mesh sees it: the line antenna_sim.m puts through the pad centre along pdir. The pad's sides across
+# pdir are no copper edges: lines there gave 0.25 mm cells beside the port and put the printed monopole 3.7 % low
+pline = [port[a] if pdir[a % 3] else (port[a % 3] + port[a % 3 + 3]) / 2 for a in range(6)]
+pts = [(box[0], box[1]), (box[2], box[3]), (pline[0], pline[1]), (pline[3], pline[4])] + [l[:2] for l in lines if inbox(l)]
 hx |= gx | {round(p[0], 3) for p in pts}; hy |= gy | {round(p[1], 3) for p in pts}
 # straight antenna edges for the thirds rule: coordinate -> side of the metal (+1 above, -1 below)
 edge = ({}, {})
@@ -376,10 +384,10 @@ mx, my = sorted(hx), sorted(hy)
 # ---- grid lines (mesher.py) ---------------------------------------------------------------------
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mesher  # noqa: E402
-grid = mesher.build(a.mode, a.f0 * 1e6, box, [list(edge[0]), list(edge[1])], [mx, my], port, [sorted(pgnd[0]), sorted(pgnd[1])],
-                    [l[:2] for l in lines], outline, list(cu_z.values()), diel, a.case)
+grid = mesher.build(a.mode, a.f0 * 1e6, box, [list(edge[0]), list(edge[1])], [mx, my], pline, [sorted(pgnd[0]), sorted(pgnd[1])],
+                    [l[:2] for l in lines], outline, list(cu_z.values()), diel, a.case, a.set)
 grid = {k: [round(v, 4) for v in grid[k]] for k in 'xyz'}   # what antenna_geom.m holds: check that, not the floats
-bad = mesher.check(grid, port, list(cu_z.values()), diel)
+bad = mesher.check(grid, pline, list(cu_z.values()), diel)
 if bad: sys.exit('mesh error (please report it, with the board):\n  ' + '\n  '.join(bad))
 
 # ---- write ---------------------------------------------------------------------------------------
