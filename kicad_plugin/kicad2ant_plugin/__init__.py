@@ -26,7 +26,7 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.4'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.5'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
@@ -372,9 +372,16 @@ class Kicad2antDialog(wx.Dialog):
             sg.Add(b)
         sg.Add(wx.StaticText(setup, label='Theme'), 0, wx.ALIGN_CENTER_VERTICAL)
         sg.Add(self.theme_ctl)
+        self.tools_lbl = wx.StaticText(setup, label='Looking for Octave and openEMS ...')
+        check = wx.Button(setup, label='Check again')
+        check.SetToolTip('Look for Octave and openEMS again, with the paths above.')
+        check.Bind(wx.EVT_BUTTON, lambda e: self.check_tools())
         setup_box = wx.BoxSizer(wx.VERTICAL)
         setup_box.Add(sg, 0, wx.EXPAND | wx.ALL, 10)
+        setup_box.Add(self.tools_lbl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        setup_box.Add(check, 0, wx.ALL, 10)
         setup.SetSizer(setup_box)
+        self.check_tools()
 
         # ---- About: what it is, and the antenna footprint it expects
         name = wx.StaticText(about, label='%s %s' % (TITLE, VERSION))
@@ -733,6 +740,31 @@ class Kicad2antDialog(wx.Dialog):
         self.timer.Start(1000)
         threading.Thread(target=self.reader, args=(self.proc, out), daemon=True).start()
 
+    def check_tools(self):
+        """Fills the Setup tab's line with the Octave and openEMS a run would use, and their versions (kicad2ant.py --check)."""
+        python = core.find_python()
+        if not python:
+            self.tools_lbl.SetLabel('Python 3 was not found: install it from python.org.')
+            return
+        self.tools_lbl.SetLabel('Looking for Octave and openEMS ...')
+        env = child_env(python, self.octave.GetValue().strip(), self.openems.GetValue().strip())
+        kw = {'creationflags': core.NO_WINDOW} if os.name == 'nt' else {}
+
+        def run():
+            try:
+                r = subprocess.run([python, script_path(), '--check'], capture_output=True, text=True, encoding='utf-8',
+                                   errors='replace', env=env, timeout=90, stdin=subprocess.DEVNULL, **kw)
+                text = core.failure_line((r.stdout + r.stderr).splitlines()) or 'Could not check Octave and openEMS.'
+            except (OSError, subprocess.SubprocessError) as e:
+                text = 'Could not check Octave and openEMS: %s' % e
+            wx.CallAfter(lambda: self and self.show_tools(text))
+        threading.Thread(target=run, daemon=True).start()
+
+    def show_tools(self, text):
+        self.tools_lbl.SetLabel(text.replace('; ', '\n'))   # one program per line
+        self.tools_lbl.Wrap(max(300, self.tools_lbl.GetParent().GetClientSize().width - 20))
+        self.tools_lbl.GetParent().Layout()
+
     def reader(self, proc, out):
         for line in proc.stdout:
             wx.CallAfter(self.add_log, line.rstrip())
@@ -812,8 +844,11 @@ class Kicad2antDialog(wx.Dialog):
             if not self.stopped:   # the reason is in the log: show it
                 self.log_pane.Expand()
                 self.layout_log()
-            self.set_summary('Stopped.' if self.stopped else
-                             (core.failure_line(self.log.GetValue().splitlines()) or 'Failed: see the log below.'), True)
+            why = core.failure_line(self.log.GetValue().splitlines())
+            self.set_summary('Stopped.' if self.stopped else (why or 'Failed: see the log below.'), True)
+            if not self.stopped and why.startswith('Octave not found'):   # nothing runs without it: say so plainly
+                self.book.SetSelection(3)   # Setup, where its path goes
+                wx.MessageBox(why, TITLE, wx.ICON_WARNING)
         self.open_btn.Enable(os.path.isdir(self.out))
         self.grow()
 

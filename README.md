@@ -63,17 +63,76 @@ You need three free programs. kicad2ant doesn't bundle any of them.
 | [openEMS](https://github.com/thliebig/openEMS-Project/releases) v0.37 or newer | must be in a folder without spaces |
 | Python 3 | command line only. The plugin uses KiCad's own Python |
 
-Setting up openEMS, once:
+Octave is not optional. openEMS is only the field solver: the 3D model, the mesh, the port, the run and every
+result (S11, Zin, pattern, plots, `.s1p`) are made by Octave, through the Octave scripts in openEMS's `matlab`
+folder. With openEMS alone a run stops at once with `Octave not found`.
 
-- Windows: unzip the release somewhere without spaces, say `C:\openEMS`. Open Octave and run
-  `cd C:\openEMS\matlab; setup` to build the file readers for your Octave version.
-- Linux / macOS: install or build openEMS the way its docs say (usually into `~/opt/openEMS`).
+MATLAB is not supported: kicad2ant starts Octave's command line, and MATLAB takes other options.
+
+### Linking Octave to openEMS, once
+
+Windows:
+
+1. Install [GNU Octave](https://octave.org/download) with its installer (the default place,
+   `C:\Program Files\GNU Octave\Octave-<version>`, is fine; that space is no problem).
+2. Unzip the openEMS release into a folder **without spaces**, say `C:\openEMS`. It holds `openEMS.exe`,
+   `AppCSXCAD.exe`, `matlab\` and `CTB\`.
+3. Open Octave (the GUI from the Start menu) and type:
+   ```
+   cd C:\openEMS\matlab
+   setup
+   ```
+   This builds openEMS's file readers for your Octave. Run it again whenever you update Octave or openEMS, with
+   the same Octave kicad2ant uses (the newest one if you have several).
+4. Check it: in KiCad open kicad2ant, **Setup** tab. It shows the Octave and openEMS it found and their
+   versions, e.g.
+   ```
+   Octave 11.1.0 (C:\Program Files\GNU Octave\Octave-11.1.0\mingw64\bin\octave-gui.exe)
+   openEMS v0.37.0 (C:\openEMS\openEMS.exe)
+   ```
+   From the command line: `python scripts/kicad2ant.py --check`. Every run's log starts with the same line.
+
+Linux / macOS: install Octave from your package manager (`apt install octave`, `brew install octave`), and
+install or build openEMS the way its docs say (usually into `~/opt/openEMS`). Then either set its folder in the
+Setup tab (`OPENEMS=~/opt/openEMS` on the command line), or add its scripts to `~/.octaverc` once:
+
+```
+addpath('~/opt/openEMS/share/openEMS/matlab');
+addpath('~/opt/openEMS/share/CSXCAD/matlab');
+```
+
+You don't need to add anything to Octave's path on Windows: each run adds openEMS's `matlab` and `CTB` folders
+itself.
+
+### When they are not found
 
 kicad2ant looks for Octave and openEMS on its own: on `PATH`, in `C:\Program Files\GNU Octave` (newest version
-first), and in any `openEMS*` folder up to two levels deep on drives C to H. If it doesn't find them, set the
-**Octave** and **openEMS folder** fields in the plugin window, or the `OCTAVE` and `OPENEMS` environment
-variables. On Windows the openEMS folder is the one containing `matlab/`. On Linux and macOS it's the install
-prefix (the folder with `bin/` and `share/`).
+first), and in any `openEMS*` folder up to two levels deep on drives C to H. If the Setup tab says one is not
+found, fill in its field there (the **...** button browses) and click **Check again**. On the command line set
+the `OCTAVE` and `OPENEMS` environment variables instead.
+
+- **Octave**: the program, `octave-gui.exe` on Windows
+  (`C:\Program Files\GNU Octave\Octave-11.1.0\mingw64\bin\octave-gui.exe`), `octave` elsewhere.
+- **openEMS folder**: on Windows the folder containing `openEMS.exe` and `matlab\`; on Linux and macOS the
+  install prefix (the folder with `bin/` and `share/`).
+
+### Connecting the plugin to Octave and openEMS
+
+The plugin runs the same `kicad2ant.py` in KiCad's own Python, so it finds Octave and openEMS the same way. Usually
+there is nothing to set:
+
+1. Do the steps above, then install the plugin (next section) and restart KiCad.
+2. In the PCB editor click the kicad2ant toolbar button (or **Tools → External Plugins → kicad2ant**), and go to the **Setup** tab.
+3. Read the two lines under the fields:
+   - both show a version: you're connected, go to the **Run** tab;
+   - `Octave not found`: click **...** next to **Octave** and pick `octave-gui.exe` (Windows, in
+     `C:\Program Files\GNU Octave\Octave-<version>\mingw64\bin\`) or `octave` (Linux / macOS, e.g. `/usr/bin/octave`);
+   - `openEMS: not found`: click **...** next to **openEMS folder** and pick the folder holding `openEMS.exe`
+     (Windows) or the install prefix (Linux / macOS, e.g. `~/opt/openEMS`).
+4. Click **Check again**. The paths are saved when you press Simulate or close the window, so you set them once.
+
+If a run still fails with `h5readatt_octave` or `setup` in the log, step 3 of the linking above (`setup` in
+openEMS's `matlab` folder) was skipped or done in another Octave.
 
 ## Installing the KiCad plugin
 
@@ -268,7 +327,8 @@ Mention these whenever you share a result.
 
 | Red line says | Fix |
 |---|---|
-| `Octave not found` | install Octave, or set **Octave** in the window (`OCTAVE` on the command line) |
+| `Octave not found` | install Octave, or set **Octave** in the Setup tab (`OCTAVE` on the command line). See [Linking Octave to openEMS](#linking-octave-to-openems-once) |
+| `Octave not found at <path>` | the Octave path in the Setup tab (or `OCTAVE`) is wrong: fix it, or clear it to find Octave by itself |
 | `openEMS Octave scripts not found` | install openEMS, or set **openEMS folder** (`OPENEMS`) |
 | `openEMS is in a path with a space` | move openEMS to a folder without spaces |
 | an error mentioning `h5readatt_octave` or `setup` | run `setup` once in openEMS's `matlab` folder, using the Octave kicad2ant uses |

@@ -1,5 +1,23 @@
 # Changelog — kicad2ant
 
+## v0.3.5 (2026-11-13)
+
+### Added
+- Plugin Setup tab shows the Octave and openEMS a run will use and their versions, or which one is not found,
+  with a Check again button. `kicad2ant.py --check` prints the same; every run's log starts with it.
+- README: step-by-step linking of Octave to openEMS (Windows `setup`, Linux / macOS `.octaverc`), and that MATLAB
+  is not supported.
+
+### Changed
+- A missing Octave is reported before any work starts (it used to come after the board was extracted), with a
+  message that says why Octave is needed. A wrong Octave path in the Setup tab (or `OCTAVE`) is named as such. In
+  the plugin it opens a warning and the Setup tab.
+
+### Fixed
+- Show the 3D model (`--view`, since 0.3.4): on a re-run it opened at once with the previous run's model (e.g.
+  without a plastic case just added), because the last run's openEMS.log was still there. It now waits for this
+  run's log. The simulation itself always used the new model.
+
 ## v0.3.4 (2026-11-13)
 
 ### Added

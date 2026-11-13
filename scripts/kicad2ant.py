@@ -3,6 +3,7 @@
   python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|fast|coarse|fine] [--f0 MHz] [--band LO HI]
                       [--feed PAD] [--gnd NET] [--case ER TAND WALL SIDE TOP BOTTOM] [--out DIR]
                       [--set KEY=VALUE ...] [--post] [--view]
+  python kicad2ant.py --check     which Octave and openEMS a run uses, and their versions
 
 REF is the antenna footprint (default: the one AE*/ANT* or RF_Antenna footprint). Results go to
 BOARD_kicad2ant/ next to the board (or --out): results/<REF>_<mode>_summary.txt and plots.
@@ -13,9 +14,9 @@ import argparse, glob, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
-VERSION = '0.3.4'   # on every plot; build_pcm.py checks it against metadata.json
+VERSION = '0.3.5'   # on every plot; build_pcm.py checks it against metadata.json
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-ap.add_argument('board'); ap.add_argument('ref', nargs='?', default='auto')
+ap.add_argument('board', nargs='?'); ap.add_argument('ref', nargs='?', default='auto')
 ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fast',
                 help='dry: builds the model and draws it, no simulation; fast (default): rougher model, S11 / Zin / '
                      'resonance / -10 dB band only, for each tuning step; coarse: also gain, efficiency and pattern, '
@@ -32,18 +33,26 @@ ap.add_argument('--set', action='append', default=[], metavar='KEY=VALUE',
                      "mode's values are in mesher.py MODES (cell, nmin, nz, merge, ratio, air, f_start, f_stop, npts, "
                      'nrts, end_db, threads, pattern, f_pat, pat_step)')
 ap.add_argument('--post', action='store_true', help='only redo the post-processing on the saved fields')
+ap.add_argument('--check', action='store_true', help='only say which Octave and openEMS are used, and their versions')
 ap.add_argument('--view', action='store_true', help="open the 3D model in openEMS's viewer (AppCSXCAD) as soon as it is built, while openEMS runs: "
                                                  "stop the run if the mesh or the port looks wrong")
 a = ap.parse_args()
 
 def octave():
-    exe = os.environ.get('OCTAVE') or shutil.which('octave-gui') or shutil.which('octave')
+    exe = os.environ.get('OCTAVE')
+    if exe:
+        if not (os.path.isfile(exe) or shutil.which(exe)):
+            sys.exit(f'Octave not found at {exe}: fix the Octave path in the Setup tab (or OCTAVE), or clear it to find Octave by itself')
+        return exe
+    exe = shutil.which('octave-gui') or shutil.which('octave')
     if not exe and WIN:
         found = (glob.glob(r'C:\Program Files\GNU Octave\Octave-*\mingw64\bin\octave-gui.exe')
                  + glob.glob(os.path.expandvars(r'%LOCALAPPDATA%\Programs\GNU Octave\Octave-*\mingw64\bin\octave-gui.exe')))
         ver = lambda p: [int(n) for n in re.findall(r'\d+', re.search(r'Octave-([\d.]*)', p).group(1))]   # 11.1 after 9.2
         exe = max(found, key=ver, default=None)
-    if not exe: sys.exit('Octave not found: install it (octave.org) or set OCTAVE to octave-gui.exe / octave')
+    if not exe: sys.exit('Octave not found: kicad2ant needs GNU Octave (free, octave.org) to build the model, run openEMS and '
+                         'draw the results. Install it and run again; if it is installed, set octave-gui.exe / octave in the '
+                         'Setup tab (or OCTAVE)')
     return exe
 
 def openems():
@@ -58,8 +67,39 @@ def openems():
         if hits: return sorted(hits)[-1]
     return ''   # Linux / macOS: openEMS already on the Octave path via .octaverc
 
+def ems_exe(ems):
+    return next((p for p in (os.path.join(ems, 'openEMS.exe'), os.path.join(ems, 'bin', 'openEMS')) if ems and os.path.isfile(p)),
+                shutil.which('openEMS'))
+
+
+def version(cmd, pattern):
+    """The version a program prints (Octave --version, openEMS's banner), '' if it does not run."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    m = re.search(pattern, r.stdout + r.stderr)
+    return m.group(1) if m else ''
+
+
+def tools():
+    """One line: the Octave and openEMS this run uses, with their versions."""
+    exe = ems_exe(openems())
+    oct_v = version([OCTAVE, '--version'], r'version (\S+)') or '(version unknown)'
+    ems_v = version([exe], r'version (v?[\w.]+)') or '(version unknown)' if exe else ''
+    return f'Octave {oct_v} ({OCTAVE}); ' + (f'openEMS {ems_v} ({exe})' if exe else
+                                            'openEMS: not found, set its folder in the Setup tab (or OPENEMS)')
+
+
+if a.check:
+    OCTAVE = octave()
+    print(tools(), flush=True)
+    sys.exit(0 if ems_exe(openems()) else 1)
+if not a.board: ap.error('the board is needed')
 board = os.path.abspath(a.board)
 if not os.path.isfile(board): sys.exit(f'no such board: {board}')
+OCTAVE = octave()   # first: without Octave nothing below can run, so say so before any work
+print(tools(), flush=True)
 out = os.path.abspath(a.out or os.path.splitext(board)[0] + '_kicad2ant')
 if ' ' in out: sys.exit(f'the run folder has a space ({out}): openEMS nf2ff cannot use it, pass --out C:\\sim\\myboard')
 os.makedirs(out, exist_ok=True)
@@ -126,11 +166,17 @@ def view():
     else: print('warning: --view: AppCSXCAD (the openEMS 3D viewer) was not found')
 
 
-p = subprocess.Popen([octave(), '--no-gui', '--eval', script], env=dict(os.environ, OPENBLAS_NUM_THREADS=os.environ.get('OPENBLAS_NUM_THREADS', '1')))
+started = time.time()
+p = subprocess.Popen([OCTAVE, '--no-gui', '--eval', script], env=dict(os.environ, OPENBLAS_NUM_THREADS=os.environ.get('OPENBLAS_NUM_THREADS', '1')))
 shown = False
 while p.poll() is None:   # the model opens once openEMS starts (its log appears after antenna.xml is complete), not after the run
-    if a.view and not shown and os.path.isfile(os.path.join(sim_dir, 'openEMS.log')):
-        view(); shown = True
+    if a.view and not shown:
+        try:   # a log from before this run is the last run's: its model is the old one
+            new = os.path.getmtime(os.path.join(sim_dir, 'openEMS.log')) >= started
+        except OSError:   # not there yet, or the run is clearing the folder
+            new = False
+        if new:
+            view(); shown = True
     time.sleep(0.5)
 if a.view and not shown and p.returncode == 0:   # dry run and --post: no openEMS run, the model is there now
     view()
