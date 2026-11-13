@@ -75,6 +75,33 @@ def test_case():
     assert '--case' not in core.build_cmd('py', 'k.py', 'b', 'o', 'fast')
 
 
+def test_time_left():
+    line = "[@       12s] Timestep:         8056 || Speed:  164.9 MC/s (1.304e-03 s/TS) || Energy: ~1.42e-17 (-24.73dB)"
+    assert core.energy(line) == (12, 24.73) and core.energy('Create FDTD operator') is None
+    assert core.energy(line.replace('[@       12s]', '[@     1m05s]'))[0] == 65   # openEMS's form after a minute
+    assert core.energy(line.replace('[@       12s]', '[@  1h02m03s]'))[0] == 3723
+    assert core.time_left([(4, 0.0), (8, 10.0), (12, 20.0), (16, 30.0)], 40) == 4.0   # 2.5 dB/s, 10 dB to go
+    assert core.time_left([(4, 0.0), (8, 10.0)], 40) is None                         # too early to tell
+    assert core.time_left([(8, 10.0), (12, 9.0), (16, 8.0)], 40) is None             # not falling
+
+
+def test_default_band():
+    assert core.default_band('2440') == (2400.0, 2483.5) and core.default_band('868') == (850.6, 885.4)
+    assert core.default_band('') is None and core.default_band('x') is None
+
+
+def test_auto_pick():
+    assert core.auto_pick([('ANT**', 'MyLib:IFA'), ('R1', 'Resistor_SMD:R_0402')]) == ('ANT**', None)
+    assert core.auto_pick([('E1', 'RF_Antenna:Johanson_2450AT18')]) == ('E1', None)
+    assert core.auto_pick([('R1', 'R')])[0] is None and 'no AE*' in core.auto_pick([('R1', 'R')])[1]
+    assert core.auto_pick([('AE1', ''), ('AE2', '')]) == (None, 'several: AE1, AE2')
+
+
+def test_describe_sets():
+    assert core.describe_sets(['pattern=0', 'cell=0.2']) == 'pattern off, cell 0.2'
+    assert core.describe_sets([]) == ''
+
+
 def test_auto_sweep():
     assert core.auto_sweep('2440') == (1464.0, 3416.0)
     assert core.auto_sweep('868') == (520.8, 1215.2)

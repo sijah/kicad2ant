@@ -28,6 +28,46 @@ def progress(line, target_db):
     return min(max(float(m.group(2)) / target_db, 0.0), 0.99) if m and target_db else None
 
 
+def energy(line):
+    """(seconds since openEMS started, energy dB below its peak) from a 'Timestep' line, else None."""
+    m = ENERGY.search(line)
+    if not m:
+        return None
+    t = re.search(r'\[@\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(\d+)s\]', line)   # '[@ 12s]', '[@ 1m05s]', '[@ 1h02m03s]'
+    secs = sum(int(x or 0) * k for x, k in zip(t.groups(), (3600, 60, 1))) if t else None
+    return secs, float(m.group(2))
+
+
+def default_band(f0):
+    """The target band kicad2ant.py checks when none is given, in MHz: Wi-Fi/BLE at 2440, else f0 -/+ 2 %; None for a bad f0."""
+    try:
+        f = float(f0)
+    except ValueError:
+        return None
+    return (2400.0, 2483.5) if abs(f - 2440) < 10 else (round(f * 0.98, 1), round(f * 1.02, 1))
+
+
+def time_left(samples, target_db):
+    """Seconds to the end criterion from [(seconds, dB)] so far, or None while it cannot tell. The energy falls
+    about linearly in dB once the pulse has left the port, so the rate since the first sample past 3 dB is used."""
+    pts = [(t, d) for t, d in samples if t is not None and d >= 3]
+    if len(pts) < 3 or not target_db:
+        return None
+    (t0, d0), (t1, d1) = pts[0], max(pts, key=lambda p: (p[1], p[0]))
+    if t1 <= t0 or d1 <= d0:
+        return None
+    return max(0.0, (target_db - d1) / ((d1 - d0) / (t1 - t0)) - (pts[-1][0] - t1))
+
+
+def auto_pick(footprints):
+    """What the automatic antenna pick finds, from [(reference, library id)]: (ref, None) when exactly one footprint
+    looks like an antenna (the extractor's rule), else (None, why)."""
+    cand = sorted({r for r, lib in footprints if is_antenna_ref(r, lib)})
+    if len(cand) == 1:
+        return cand[0], None
+    return None, ('no AE* / ANT* / antenna footprint' if not cand else 'several: %s' % ', '.join(cand))
+
+
 def phase(line):
     if re.search(r'^\w+ mesh: ', line):
         return 'Meshing'
@@ -85,6 +125,20 @@ def auto_sweep(f0):
     except ValueError:
         return None
     return (round(f * 0.6, 1), round(f * 1.4, 1)) if f > 0 else None
+
+
+SIM_SHORT = {'f_start': 'sweep start', 'f_stop': 'sweep stop', 'npts': 'points', 'cell': 'cell', 'nmin': 'cells across',
+             'merge': 'merge', 'nz': 'substrate cells', 'ratio': 'grading', 'air': 'air', 'nrts': 'max steps',
+             'end_db': 'end', 'threads': 'threads', 'f_pat': 'pattern at', 'pat_step': 'pattern step'}
+
+
+def describe_sets(sets):
+    """The changed run settings in words for the Run tab, e.g. 'pattern off, cell 0.2'."""
+    out = []
+    for kv in sets:
+        k, _, v = kv.partition('=')
+        out.append(('pattern on' if float(v) else 'pattern off') if k == 'pattern' else '%s %s' % (SIM_SHORT.get(k, k), v))
+    return ', '.join(out)
 
 
 def sim_sets(values, defaults):

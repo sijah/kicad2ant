@@ -1,5 +1,20 @@
 # Changelog — kicad2ant
 
+## v0.3.3 (2026-11-13)
+
+### Changed
+- Plugin window cleaned up. Run tab: mode, f0, band (the default band shows in grey), ground net ("auto"), the
+  antenna Auto finds (e.g. "Auto: AE1 pad 1", with a warning when the reference is not annotated), the case
+  fields only for a plastic case, and a line saying what the Simulation tab changes from the mode, with Edit.
+  One "Open folder" button with a menu (results / run folder). The log is folded and opens when a run fails.
+  Progress shows the energy against the end criterion (-18 of -40 dB) and an estimate of the time left.
+- Simulation tab: grouped into Sweep / Mesh / Run / Far field; changed values in bold; the pattern
+  frequency and step are greyed when the pattern is off.
+- New Setup tab for Octave, the openEMS folder, the run folder location and the theme. The big header is gone.
+
+### Fixed
+- When a run ended, the window showed the Simulation tab instead of Results (since 0.3.1).
+
 ## v0.3.2 (2026-11-13)
 
 ### Changed

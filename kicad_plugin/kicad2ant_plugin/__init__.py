@@ -2,7 +2,7 @@
 
 It fills the zones, saves a copy of the board as it is on screen into the run folder and runs scripts/kicad2ant.py
 on that copy (the user's .kicad_pcb / .kicad_pro are never written). Progress comes from openEMS's own log file."""
-import json, os, subprocess, sys, threading, time
+import json, os, re, subprocess, sys, threading, time
 
 import pcbnew
 import wx
@@ -20,17 +20,18 @@ LABELS = {'dry': 'Check model (seconds)', 'fast': 'Fast: S11 only (about a minut
           'coarse': 'Coarse: S11, gain, pattern (minutes)', 'fine': 'Fine: final numbers (much longer)'}
 MODES = [(LABELS[m], m) for m, _ in core.MODES]   # (label, mode) in list order
 HELP = dict(core.MODES)
-AUTO = 'Auto: the AE* / ANT* / antenna footprint, pad 1'
 GOOD = 'Good: the -10 dB band covers your target band.'
 THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.2'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.3'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
 _dialog = None
+SIM_GROUPS = (('Sweep', ('f_start', 'f_stop', 'npts')), ('Mesh', ('cell', 'nmin', 'nz', 'merge', 'ratio', 'air')),
+              ('Run', ('end_db', 'nrts', 'threads')), ('Far field', ('pattern', 'f_pat', 'pat_step')))
 
 
 def script_path():
@@ -103,26 +104,20 @@ class Kicad2antDialog(wx.Dialog):
         super().__init__(parent, title='%s %s: antenna simulation' % (TITLE, VERSION),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX)
         logo = wx.Image(LOGO) if os.path.isfile(LOGO) else None
-        header = wx.BoxSizer(wx.HORIZONTAL)
         if logo is not None and logo.IsOk():
             self.SetIcon(wx.Icon(wx.Bitmap(logo)))
-            header.Add(wx.StaticBitmap(self, bitmap=wx.Bitmap(logo.Scale(40, 40, wx.IMAGE_QUALITY_HIGH))), 0, wx.RIGHT, 10)
-        name = wx.StaticText(self, label=TITLE)
-        name.SetFont(name.GetFont().Scaled(1.6).Bold())
-        about = wx.BoxSizer(wx.VERTICAL)
-        about.Add(name)
-        about.Add(wx.StaticText(self, label='version %s  ·  PCB antenna simulation in openEMS' % VERSION))
-        header.Add(about, 0, wx.ALIGN_CENTER_VERTICAL)
         s = load_settings()
         self.proc = None
         self.out = ''
         self.mode = 'fast'
         self.target = None
         self.feed = None
+        self.feed_board = None
         self.started = 0.0
         self.log_pos = 0
         self.log_rest = ''
         self.best = 0.0
+        self.samples = []   # (seconds, dB) from openEMS's log, for the time left
         self.stopped = False
         self.failed = False
         self.summary_text = ''
@@ -133,42 +128,44 @@ class Kicad2antDialog(wx.Dialog):
         run = wx.Panel(self.book)
         sim = wx.ScrolledWindow(self.book)
         resp = wx.Panel(self.book)
-        self.book.AddPage(run, 'Run')
-        self.book.AddPage(sim, 'Simulation')
-        self.book.AddPage(resp, 'Results')
+        setup = wx.Panel(self.book)
+        for page, label in ((run, 'Run'), (sim, 'Simulation'), (resp, 'Results'), (setup, 'Setup')):
+            self.book.AddPage(page, label)
 
+        # ---- Run: what to simulate, then run it
         self.mode_ctl = wx.Choice(run, choices=[m[0] for m in MODES])
         self.mode_ctl.SetSelection([m for _, m in MODES].index(core.mode_key(s['mode'])))
         self.mode_ctl.SetToolTip('\n'.join('%s: %s' % (label.split(':')[0].split(' (')[0], HELP[m]) for label, m in MODES))
+        self.mode_ctl.Bind(wx.EVT_CHOICE, lambda e: self.on_mode())
         self.mode_help = wx.StaticText(run, label='')   # what the chosen mode does, in one line
-        self.mode_ctl.Bind(wx.EVT_CHOICE, lambda e: (self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]]),
-                                                     self.fill_sim()))
-        self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]])
         self.f0 = wx.TextCtrl(run, value=s['f0'], size=(70, -1))
         self.lo = wx.TextCtrl(run, value=s['lo'], size=(70, -1))
         self.hi = wx.TextCtrl(run, value=s['hi'], size=(70, -1))
         for c in (self.lo, self.hi):
-            c.SetToolTip('Target band in MHz. Leave empty: 2400 to 2483.5 at 2440 MHz, else f0 +/- 2 %.')
-        self.gnd = wx.TextCtrl(run, size=(90, -1))
+            c.SetToolTip('Target band in MHz. Leave empty for the default shown in grey: 2400 to 2483.5 at 2440 MHz, '
+                         'else f0 +/- 2 %.')
+        self.gnd = wx.TextCtrl(run, size=(110, -1))
+        self.gnd.SetHint('auto')
         self.gnd.SetToolTip('The ground net of this board. Leave empty: the net of the antenna\'s pad 2, else GND, '
                             'else the largest zone net with a ground name (AGND, GNDA, VSS ...).')
-        self.theme_ctl = wx.Choice(run, choices=THEMES)
-        self.theme_ctl.SetSelection(s['theme'] if s['theme'] in (0, 1, 2) else 0)
-        self.theme_ctl.Bind(wx.EVT_CHOICE, lambda e: self.apply_theme())
-        grid = wx.FlexGridSizer(0, 6, 6, 8)
-        for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('Ground net', self.gnd),
-                           ('Band from (MHz)', self.lo), ('to (MHz)', self.hi), ('Theme', self.theme_ctl)):
+        band = wx.BoxSizer(wx.HORIZONTAL)
+        band.Add(self.lo, 0, wx.ALIGN_CENTER_VERTICAL)
+        band.Add(wx.StaticText(run, label=' to '), 0, wx.ALIGN_CENTER_VERTICAL)
+        band.Add(self.hi, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid = wx.FlexGridSizer(0, 4, 6, 8)
+        for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('Band (MHz)', band), ('Ground net', self.gnd)):
             grid.Add(wx.StaticText(run, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctl, 0, wx.ALIGN_CENTER_VERTICAL)
 
-        self.feed_txt = wx.StaticText(run, label=AUTO)
+        self.feed_txt = wx.StaticText(run, label='')
         use_sel = wx.Button(run, label='Use selected pad')
         use_sel.SetToolTip('Click the feed pad of the antenna in the PCB editor (this window stays open), then press this.')
         use_sel.Bind(wx.EVT_BUTTON, self.on_use_selected)
         auto = wx.Button(run, label='Auto')
+        auto.SetToolTip('The one footprint named AE* / ANT* or from an antenna library, pad 1.')
         auto.Bind(wx.EVT_BUTTON, lambda e: self.set_feed(None))
         feed_row = wx.BoxSizer(wx.HORIZONTAL)
-        feed_row.Add(wx.StaticText(run, label='Feed:'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        feed_row.Add(wx.StaticText(run, label='Antenna'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         feed_row.Add(self.feed_txt, 1, wx.ALIGN_CENTER_VERTICAL)
         feed_row.Add(use_sel, 0, wx.LEFT, 6)
         feed_row.Add(auto, 0, wx.LEFT, 4)
@@ -180,79 +177,90 @@ class Kicad2antDialog(wx.Dialog):
                                  'ABS about 3.0 / 0.01, PC 2.9 / 0.01, nylon 3.2-3.8 / 0.02. Plastic lowers the resonance.')
         vals = s['case_vals'] if len(s['case_vals']) == 6 else [d for _, d in core.CASE_FIELDS]
         self.case_vals = [wx.TextCtrl(run, value=str(v), size=(45, -1)) for v in vals]
-        case_row = wx.BoxSizer(wx.HORIZONTAL)
-        case_row.Add(wx.StaticText(run, label='Around the board:'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        case_row = wx.WrapSizer(wx.HORIZONTAL)   # the plastic fields wrap in a narrow window
+        case_row.Add(wx.StaticText(run, label='Board in'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         case_row.Add(self.case_ctl, 0, wx.RIGHT, 8)
+        self.case_widgets = list(self.case_vals)   # shown only for a plastic case
         for (label, _), c in zip(core.CASE_FIELDS, self.case_vals):
-            case_row.Add(wx.StaticText(run, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 3)
+            t = wx.StaticText(run, label=label)
+            self.case_widgets.append(t)
+            case_row.Add(t, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 3)
             case_row.Add(c, 0, wx.RIGHT, 6)
-        case_row.Add(wx.StaticText(run, label='mm'), 0, wx.ALIGN_CENTER_VERTICAL)
+        mm = wx.StaticText(run, label='mm')
+        self.case_widgets.append(mm)
+        case_row.Add(mm, 0, wx.ALIGN_CENTER_VERTICAL)
         self.case_ctl.Bind(wx.EVT_CHOICE, lambda e: self.enable_case())
-        self.enable_case()
 
-        self.octave = wx.TextCtrl(run, value=s['octave'])
-        self.octave.SetToolTip('Leave empty to find Octave by itself. Set it if the run says Octave was not found.')
-        browse = wx.Button(run, label='...', size=(30, -1))
-        browse.Bind(wx.EVT_BUTTON, self.on_browse)
-        oct_row = wx.BoxSizer(wx.HORIZONTAL)
-        oct_row.Add(wx.StaticText(run, label='Octave (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-        oct_row.Add(self.octave, 1)
-        oct_row.Add(browse, 0, wx.LEFT, 4)
+        self.sim_line = wx.StaticText(run, label='')   # the Simulation tab's changes, so the mode label never misleads
+        edit = wx.Button(run, label='Edit')
+        edit.Bind(wx.EVT_BUTTON, lambda e: self.book.SetSelection(1))
+        sim_row = wx.BoxSizer(wx.HORIZONTAL)
+        sim_row.Add(self.sim_line, 1, wx.ALIGN_CENTER_VERTICAL)
+        sim_row.Add(edit, 0, wx.LEFT, 6)
 
-        self.openems = wx.TextCtrl(run, value=s['openems'])
-        self.openems.SetToolTip('The openEMS folder, no spaces in the path: the one holding openEMS.exe and matlab on '
-                                'Windows, the install prefix (e.g. ~/opt/openEMS) on Linux and macOS. '
-                                'Leave empty to find openEMS by itself.')
-        browse_ems = wx.Button(run, label='...', size=(30, -1))
-        browse_ems.Bind(wx.EVT_BUTTON, self.on_browse_openems)
-        ems_row = wx.BoxSizer(wx.HORIZONTAL)
-        ems_row.Add(wx.StaticText(run, label='openEMS folder (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-        ems_row.Add(self.openems, 1)
-        ems_row.Add(browse_ems, 0, wx.LEFT, 4)
-
-        self.outdir = wx.TextCtrl(run, value=s['outdir'])
-        self.outdir.SetToolTip('Where the run folder <board>_kicad2ant is made. Leave empty: next to the board file. '
-                               'A place with a space in its path cannot be used (openEMS): a folder in your '
-                               'local app data is used then.')
-        browse_out = wx.Button(run, label='...', size=(30, -1))
-        browse_out.Bind(wx.EVT_BUTTON, self.on_browse_outdir)
-        out_row = wx.BoxSizer(wx.HORIZONTAL)
-        out_row.Add(wx.StaticText(run, label='Output in (optional):'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-        out_row.Add(self.outdir, 1)
-        out_row.Add(browse_out, 0, wx.LEFT, 4)
-
-        self.view = wx.CheckBox(run, label="Show the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
+        self.view = wx.CheckBox(run, label="Open the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
         self.view.SetValue(bool(s['view']))
         self.view.SetToolTip('The model exactly as openEMS gets it: copper, board, port and mesh lines. '
                              'With Check model it opens in seconds.')
 
-        note = wx.StaticText(run, label='Simulate fills the zones (like pressing B) and runs on a copy of the board as '
-                                         'it is on screen. Your board file is not changed.')
-        note.Wrap(560)
-
         self.run_btn = wx.Button(run, label='Simulate')
+        self.run_btn.SetToolTip('Fills the zones (like pressing B) and runs on a copy of the board as it is on screen. '
+                                'Your board file is not changed.')
         self.run_btn.Bind(wx.EVT_BUTTON, self.on_run)
         self.stop_btn = wx.Button(run, label='Stop')
         self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop)
         self.stop_btn.Disable()
-        self.folder_btn = wx.Button(run, label='Open results folder')
-        self.folder_btn.Bind(wx.EVT_BUTTON, lambda e: core.open_folder(os.path.join(self.out, 'results')))
-        self.folder_btn.Disable()
-        self.run_dir_btn = wx.Button(run, label='Open run folder')
-        self.run_dir_btn.SetToolTip('The board copy, antenna_geom.m (the model Octave reads) and the sim_* folders.')
-        self.run_dir_btn.Bind(wx.EVT_BUTTON, lambda e: core.open_folder(self.out))
-        self.run_dir_btn.Disable()
+        self.open_btn = wx.Button(run, label='Open folder \u25be')
+        self.open_btn.SetToolTip('The results (plots, summary, .s1p) or the run folder (board copy, model, openEMS files).')
+        self.open_btn.Bind(wx.EVT_BUTTON, self.on_open_menu)
+        self.open_btn.Disable()
         close = wx.Button(run, wx.ID_CLOSE, 'Close')
         close.Bind(wx.EVT_BUTTON, lambda e: self.Close())
         buttons = wx.BoxSizer(wx.HORIZONTAL)
-        for b in (self.run_btn, self.stop_btn, self.folder_btn, self.run_dir_btn):
+        for b in (self.run_btn, self.stop_btn, self.open_btn):
             buttons.Add(b, 0, wx.RIGHT, 6)
         buttons.AddStretchSpacer()
         buttons.Add(close)
 
         self.phase = wx.StaticText(run, label='')
-        self.gauge = wx.Gauge(run, range=1000, size=(-1, 18))
         self.elapsed = wx.StaticText(run, label='')
+        status = wx.BoxSizer(wx.HORIZONTAL)
+        status.Add(self.phase, 1, wx.ALIGN_CENTER_VERTICAL)
+        status.Add(self.elapsed, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gauge = wx.Gauge(run, range=1000, size=(-1, 14))
+
+        self.log_pane = wx.CollapsiblePane(run, label='Log', style=wx.CP_DEFAULT_STYLE | wx.CP_NO_TLW_RESIZE)
+        pane = self.log_pane.GetPane()
+        self.log = wx.TextCtrl(pane, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 140))   # wraps: long lines stay readable
+        self.log.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        self.copy_btn = wx.Button(pane, label='Copy log')
+        self.copy_btn.SetToolTip('Puts the whole log on the clipboard, e.g. to paste into an issue.')
+        self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_log)
+        self.clear_btn = wx.Button(pane, label='Clear log')
+        self.clear_btn.Bind(wx.EVT_BUTTON, lambda e: self.log.Clear())
+        log_btns = wx.BoxSizer(wx.HORIZONTAL)
+        log_btns.Add(self.copy_btn, 0, wx.RIGHT, 6)
+        log_btns.Add(self.clear_btn)
+        log_box = wx.BoxSizer(wx.VERTICAL)
+        log_box.Add(log_btns, 0, wx.BOTTOM, 6)
+        log_box.Add(self.log, 1, wx.EXPAND)
+        pane.SetSizer(log_box)
+        self.log_pane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, lambda e: self.layout_log())
+
+        root = wx.BoxSizer(wx.VERTICAL)
+        root.Add(grid, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        root.Add(self.mode_help, 0, wx.ALL, 10)
+        for row in (feed_row, case_row, sim_row):
+            root.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(self.view, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        root.Add(self.gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        root.Add(self.log_pane, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        run.SetSizer(root)
+        self.run_sizer = root
+
+        # ---- Results
         self.summary = wx.StaticText(resp, label='')
         self.plot_ctl = wx.Choice(resp)
         self.plot_ctl.Bind(wx.EVT_CHOICE, lambda e: self.show_picture())
@@ -264,18 +272,6 @@ class Kicad2antDialog(wx.Dialog):
         self.picture.Bind(wx.EVT_PAINT, self.on_paint_picture)
         self.picture.Bind(wx.EVT_SIZE, lambda e: (self.picture.Refresh(), e.Skip()))
         self.scaled = None   # (size, wx.Bitmap) of the last drawing
-        self.log = wx.TextCtrl(run, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 140))   # wraps: long lines stay readable
-        self.log.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        self.copy_btn = wx.Button(run, label='Copy log')
-        self.copy_btn.SetToolTip('Puts the whole log on the clipboard, e.g. to paste into an issue.')
-        self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_log)
-        self.clear_btn = wx.Button(run, label='Clear log')
-        self.clear_btn.Bind(wx.EVT_BUTTON, lambda e: self.log.Clear())
-        log_row = wx.BoxSizer(wx.HORIZONTAL)
-        log_row.Add(wx.StaticText(run, label='Log'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-        log_row.Add(self.copy_btn, 0, wx.RIGHT, 6)
-        log_row.Add(self.clear_btn)
-
         plot_row = wx.BoxSizer(wx.HORIZONTAL)
         plot_row.Add(wx.StaticText(resp, label='Plot'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         plot_row.Add(self.plot_ctl)
@@ -285,55 +281,82 @@ class Kicad2antDialog(wx.Dialog):
         res_box.Add(self.picture, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         resp.SetSizer(res_box)
 
-        # Simulation tab: the chosen mode's run settings (mesher.py MODES), each one can be changed
+        # ---- Simulation: the chosen mode's run settings (mesher.py MODES), in groups; changed ones in bold
+        label_of = dict(core.SIM_FIELDS)
         self.sim_note = wx.StaticText(sim, label='')
-        self.sim_ctl = {k: wx.TextCtrl(sim, size=(90, -1)) for k, _ in core.SIM_FIELDS}
-        self.pattern = wx.CheckBox(sim, label='compute (gain, efficiency, pattern: near-to-far field)')
-        sim_grid = wx.FlexGridSizer(0, 2, 6, 10)
-        for k, label in core.SIM_FIELDS:
-            if k == 'f_pat':
-                sim_grid.Add(wx.StaticText(sim, label='Radiation pattern'), 0, wx.ALIGN_CENTER_VERTICAL)
-                sim_grid.Add(self.pattern, 0, wx.ALIGN_CENTER_VERTICAL)
-            sim_grid.Add(wx.StaticText(sim, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            sim_grid.Add(self.sim_ctl[k], 0, wx.ALIGN_CENTER_VERTICAL)
+        self.sim_ctl = {}
+        groups = wx.BoxSizer(wx.VERTICAL)
+        for title, keys in SIM_GROUPS:
+            sb = wx.StaticBoxSizer(wx.VERTICAL, sim, title)
+            box = sb.GetStaticBox()
+            g = wx.FlexGridSizer(0, 2, 6, 10)
+            for k in keys:
+                if k == 'pattern':
+                    self.pattern = wx.CheckBox(box, label='compute gain, efficiency and pattern')
+                    self.pattern.Bind(wx.EVT_CHECKBOX, lambda e: self.sim_changed())
+                    g.Add(self.pattern, 0, wx.ALIGN_CENTER_VERTICAL)
+                    g.AddSpacer(0)
+                    continue
+                c = wx.TextCtrl(box, size=(80, -1))
+                c.Bind(wx.EVT_TEXT, lambda e: self.sim_changed())
+                self.sim_ctl[k] = c
+                g.Add(wx.StaticText(box, label=label_of[k]), 0, wx.ALIGN_CENTER_VERTICAL)
+                g.Add(c, 0, wx.ALIGN_CENTER_VERTICAL)
+            sb.Add(g, 0, wx.ALL, 6)
+            groups.Add(sb, 0, wx.EXPAND | wx.BOTTOM, 8)
         reset = wx.Button(sim, label='Reset to the mode values')
         reset.Bind(wx.EVT_BUTTON, lambda e: self.fill_sim())
         sim_box = wx.BoxSizer(wx.VERTICAL)
         sim_box.Add(self.sim_note, 0, wx.ALL, 10)
-        sim_box.Add(sim_grid, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        sim_box.Add(groups, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         sim_box.Add(reset, 0, wx.LEFT | wx.BOTTOM, 10)
-        rules = wx.StaticText(sim, label='The board is always in PML_8 absorbers. Copper is zero-thickness PEC, ground vias PEC lines. '
-                                        'Smaller cells and a lower end criterion are more accurate and slower; '
-                                        'a run that hits Max timesteps did not converge.')
-        rules.Wrap(520)
-        sim_box.Add(rules, 0, wx.ALL, 10)
         sim.SetSizer(sim_box)
-        sim.SetScrollRate(0, 10)
-        self.sweep_shown = None   # the default sweep the tab shows, to follow f0 until the user changes it
-        self.fill_sim(s['sim_sets'])
-        self.f0.Bind(wx.EVT_TEXT, lambda e: self.follow_f0())
+        sim.SetScrollRate(10, 10)
+        self.sim_note.SetToolTip('The board is always in PML_8 absorbers; copper is zero-thickness PEC, ground vias PEC '
+                                 'lines. Smaller cells and a lower end criterion are more accurate and slower; a run '
+                                 'that hits Max timesteps did not converge.')
+
+        # ---- Setup: set once
+        self.theme_ctl = wx.Choice(setup, choices=THEMES)
+        self.theme_ctl.SetSelection(s['theme'] if s['theme'] in (0, 1, 2) else 0)
+        self.theme_ctl.Bind(wx.EVT_CHOICE, lambda e: self.apply_theme())
+        self.octave = wx.TextCtrl(setup, value=s['octave'])
+        self.octave.SetHint('found by itself')
+        self.octave.SetToolTip('Set it only if the run says Octave was not found: octave-gui.exe or octave.')
+        self.openems = wx.TextCtrl(setup, value=s['openems'])
+        self.openems.SetHint('found by itself')
+        self.openems.SetToolTip('The openEMS folder, no spaces in the path: the one holding openEMS.exe and matlab on '
+                                'Windows, the install prefix (e.g. ~/opt/openEMS) on Linux and macOS.')
+        self.outdir = wx.TextCtrl(setup, value=s['outdir'])
+        self.outdir.SetHint('next to the board file')
+        self.outdir.SetToolTip('Where the run folder <board>_kicad2ant is made. A place with a space in its path cannot '
+                               'be used (openEMS): a folder in your local app data is used then.')
+        sg = wx.FlexGridSizer(0, 3, 8, 8)
+        sg.AddGrowableCol(1)
+        for label, ctl, handler in (('Octave', self.octave, self.on_browse), ('openEMS folder', self.openems, self.on_browse_openems),
+                                    ('Run folders in', self.outdir, self.on_browse_outdir)):
+            b = wx.Button(setup, label='...', size=(30, -1))
+            b.Bind(wx.EVT_BUTTON, handler)
+            sg.Add(wx.StaticText(setup, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            sg.Add(ctl, 1, wx.EXPAND)
+            sg.Add(b)
+        sg.Add(wx.StaticText(setup, label='Theme'), 0, wx.ALIGN_CENTER_VERTICAL)
+        sg.Add(self.theme_ctl)
+        setup_box = wx.BoxSizer(wx.VERTICAL)
+        setup_box.Add(sg, 0, wx.EXPAND | wx.ALL, 10)
+        setup.SetSizer(setup_box)
 
         top = wx.BoxSizer(wx.VERTICAL)
-        top.Add(header, 0, wx.ALL, 10)
-        top.Add(self.book, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        root = wx.BoxSizer(wx.VERTICAL)
-        root.Add(grid, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
-        root.Add(self.mode_help, 0, wx.ALL, 10)
-        root.Add(feed_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(case_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(oct_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(ems_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(out_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(self.view, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(note, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(self.phase, 0, wx.LEFT | wx.RIGHT, 10)
-        root.Add(self.gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
-        root.Add(self.elapsed, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        root.Add(log_row, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
-        root.Add(self.log, 1, wx.EXPAND | wx.ALL, 10)
-        run.SetSizer(root)
+        top.Add(self.book, 1, wx.EXPAND | wx.ALL, 6)
         self.SetSizer(top)
+
+        self.sweep_shown = None   # the default sweep the tab shows, to follow f0 until the user changes it
+        self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]])
+        self.fill_sim(s['sim_sets'])
+        self.f0.Bind(wx.EVT_TEXT, lambda e: self.on_f0())
+        self.band_hints()
+        self.set_feed(None)
+        self.enable_case()
         self.SetMinSize((600, -1))
         self.Fit()
         if s['size']:
@@ -344,6 +367,7 @@ class Kicad2antDialog(wx.Dialog):
         self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_SIZE, self.on_size)
+        self.Bind(wx.EVT_ACTIVATE, lambda e: (self.feed is None and e.GetActive() and self.set_feed(None), e.Skip()))
         self.Bind(wx.EVT_WINDOW_DESTROY, self.on_destroy)
         self.show_previous()
 
@@ -367,18 +391,86 @@ class Kicad2antDialog(wx.Dialog):
             if k in v:
                 v[k] = x
         for k, c in self.sim_ctl.items():
-            c.SetValue('%g' % float(v[k]))
+            c.ChangeValue('%g' % float(v[k]))
         self.pattern.SetValue(bool(float(v['pattern'])))
         self.sweep_shown = core.auto_sweep(self.f0.GetValue().strip())
-        self.sim_note.SetLabel('The values of the %s mode. Change any of them for your runs; changing the mode resets '
+        self.sim_note.SetLabel('The values of the %s mode; the ones you change show in bold. Changing the mode resets '
                                'them.' % ('coarse' if mode == 'dry' else mode))
+        self.sim_changed()
+
+    def sim_changed(self):
+        """Bold for the values that differ from the mode, pattern fields only with the pattern on, and the one-line
+        account on the Run tab."""
+        if not hasattr(self, 'pattern'):
+            return
+        mode = MODES[self.mode_ctl.GetSelection()][1]
+        d = self.sim_defaults(mode)
+        for k, c in list(self.sim_ctl.items()) + [('pattern', self.pattern)]:
+            try:
+                v = float(c.GetValue())
+                changed = v != float(d[k])
+            except ValueError:
+                changed = True
+            f = c.GetFont()
+            f.SetWeight(wx.FONTWEIGHT_BOLD if changed else wx.FONTWEIGHT_NORMAL)
+            c.SetFont(f)
+        for k in ('f_pat', 'pat_step'):
+            self.sim_ctl[k].Enable(self.pattern.GetValue())
+        name = 'Coarse' if mode == 'dry' else mode.capitalize()
+        try:
+            sets = self.sim_sets(mode)
+            self.sim_line.SetLabel('Simulation: %d change%s from %s (%s)' % (len(sets), 's' * (len(sets) > 1), name,
+                                                                        core.describe_sets(sets))
+                                   if sets else 'Simulation: the %s values' % name)
+        except ValueError:
+            self.sim_line.SetLabel('Simulation: a value is not valid, see the Simulation tab')
+        self.sim_line.GetParent().Layout()
+
+    def on_mode(self):
+        self.mode_help.SetLabel(HELP[MODES[self.mode_ctl.GetSelection()][1]])
+        self.fill_sim()
+
+    def on_f0(self):
+        self.follow_f0()
+        self.band_hints()
+        self.sim_changed()
+
+    def band_hints(self):
+        """The default target band, in grey in the empty band fields."""
+        band = core.default_band(self.f0.GetValue().strip())
+        self.lo.SetHint('%g' % band[0] if band else '')
+        self.hi.SetHint('%g' % band[1] if band else '')
+
+    def layout_log(self):
+        """The open log takes the free height; folded, it gives it back."""
+        self.run_sizer.GetItem(self.log_pane).SetProportion(0 if self.log_pane.IsCollapsed() else 1)
+        self.log_pane.GetParent().Layout()
+        if not self.log_pane.IsCollapsed():
+            self.grow()
+
+    def on_open_menu(self, _):
+        m = wx.Menu()
+        res = m.Append(wx.ID_ANY, 'Results folder: plots, summary, .s1p')
+        res.Enable(os.path.isdir(os.path.join(self.out, 'results')))
+        run = m.Append(wx.ID_ANY, 'Run folder: board copy, model, openEMS files')
+        m.Bind(wx.EVT_MENU, lambda e: core.open_folder(os.path.join(self.out, 'results')), res)
+        m.Bind(wx.EVT_MENU, lambda e: core.open_folder(self.out), run)
+        self.open_btn.PopupMenu(m)
+        m.Destroy()
 
     def sim_sets(self, mode):
         """The changed run settings as KEY=VALUE; ValueError when one is not a number or out of range."""
         vals = {k: c.GetValue().strip() for k, c in self.sim_ctl.items()}
         vals['pattern'] = str(int(self.pattern.GetValue()))
         sets = core.sim_sets(vals, self.sim_defaults(mode))
-        mesher.settings('coarse' if mode == 'dry' else mode, sets)   # the same check kicad2ant.py makes
+        m = mesher.settings('coarse' if mode == 'dry' else mode, sets)   # the same checks kicad2ant.py makes
+        try:
+            f0 = float(self.f0.GetValue()) * 1e6
+        except ValueError:
+            return sets   # on_run reports the bad f0
+        lo, hi = mesher.sweep(m, f0)
+        if lo >= hi:   # one end typed, the other the default: only the resolved sweep shows it
+            raise ValueError('sweep start %g MHz is not below its stop %g MHz' % (lo / 1e6, hi / 1e6))
         return sets
 
     def sim_defaults(self, mode):
@@ -399,8 +491,9 @@ class Kicad2antDialog(wx.Dialog):
             self.sweep_shown = auto
 
     def enable_case(self):
-        for c in self.case_vals:
-            c.Enable(self.case_ctl.GetSelection() == 1)
+        for w in self.case_widgets:
+            w.Show(self.case_ctl.GetSelection() == 1)
+        self.case_ctl.GetParent().Layout()
 
     def sim_sets_or_none(self):
         try:
@@ -418,6 +511,8 @@ class Kicad2antDialog(wx.Dialog):
             for c in w.GetChildren():
                 yield from walk(c)
         for w in walk(self):
+            if isinstance(w, wx.Gauge):   # the native bar keeps its own colours; set ones draw it as a white block
+                continue
             w.SetBackgroundColour(field if isinstance(w, (wx.TextCtrl, wx.Choice, wx.Button)) else bg)
             w.SetForegroundColour(fg)
             w.Refresh()   # on Windows a page's labels keep their old colours until repainted
@@ -448,8 +543,15 @@ class Kicad2antDialog(wx.Dialog):
 
     def set_feed(self, feed, named=True):
         self.feed = feed
-        self.feed_board = pcbnew.GetBoard().GetFileName()   # the pick belongs to this board only
-        self.feed_txt.SetLabel(AUTO if feed is None else '%s pad %s' % feed + ('' if named else NOT_NAMED))
+        board = pcbnew.GetBoard()
+        self.feed_board = board.GetFileName()   # the pick belongs to this board only
+        if feed is not None:
+            text = '%s pad %s' % feed + ('' if named else NOT_NAMED)
+        else:   # say what Auto finds, not the rule
+            ref, why = core.auto_pick([(fp.GetReference(), fp.GetFPIDAsString()) for fp in board.GetFootprints()])
+            text = ('Auto: %s pad 1' % ref + ('  (reference not annotated: annotate the board)' if re.search(r'[*?]', ref) else '')
+                    if ref else 'Auto finds %s: select the feed pad and press Use selected pad' % why)
+        self.feed_txt.SetLabel(text)
         self.Layout()
 
     def on_use_selected(self, _):
@@ -547,7 +649,7 @@ class Kicad2antDialog(wx.Dialog):
                              self.view.GetValue(), case, sets)
         self.out, self.mode, self.started = out, mode, time.time()
         self.target = None if mode == 'dry' else -float(self.sim_ctl['end_db'].GetValue())
-        self.log_pos, self.log_rest, self.best, self.stopped = 0, '', 0.0, False
+        self.log_pos, self.log_rest, self.best, self.stopped, self.samples = 0, '', 0.0, False, []
         self.log.Clear()
         self.add_log(' '.join(cmd))
         self.set_summary('')
@@ -568,7 +670,7 @@ class Kicad2antDialog(wx.Dialog):
         self.run_btn.Disable()
         self.stop_btn.Enable()
         self.clear_btn.Disable()   # the log holds the failure reason until the run ends
-        self.run_dir_btn.Enable()   # the folder exists now: watch antenna_geom.m appear
+        self.open_btn.Enable()   # the folder exists now: watch antenna_geom.m appear
         self.timer.Start(1000)
         threading.Thread(target=self.reader, args=(self.proc, out), daemon=True).start()
 
@@ -598,7 +700,9 @@ class Kicad2antDialog(wx.Dialog):
         if not self:
             return
         secs = int(time.time() - self.started)
-        self.elapsed.SetLabel('%d:%02d elapsed' % (secs // 60, secs % 60))
+        left = core.time_left(self.samples, self.target)
+        self.elapsed.SetLabel('%d:%02d' % (secs // 60, secs % 60) + ('' if left is None else '  ·  about %s left' % (
+            '%d s' % left if left < 90 else '%d min' % round(left / 60))))
         log = os.path.join(self.out, 'sim_' + ('coarse' if self.mode == 'dry' else self.mode), 'openEMS.log')
         try:   # a log older than this run is the previous run's
             if os.path.getmtime(log) < self.started:
@@ -617,9 +721,12 @@ class Kicad2antDialog(wx.Dialog):
         for line in lines:
             p = core.progress(line, target)
             if p is not None:
+                e = core.energy(line)
+                if e:
+                    self.samples.append(e)
                 self.best = max(self.best, p)
                 self.gauge.SetValue(int(self.best * 1000))
-                self.phase.SetLabel('Simulating %d %%' % int(self.best * 100))
+                self.phase.SetLabel('Converging: -%d of -%d dB' % (int(self.best * target), target))
             else:
                 ph = core.phase(line)
                 if ph:
@@ -638,13 +745,15 @@ class Kicad2antDialog(wx.Dialog):
             self.gauge.SetValue(1000)
             self.phase.SetLabel('Done')
             self.show_result(self.mode, res, '')
-            self.book.SetSelection(1)   # the Results page
+            self.book.SetSelection(2)   # the Results page (Run, Simulation, Results)
         else:
             self.phase.SetLabel('Stopped' if self.stopped else 'Failed')
+            if not self.stopped:   # the reason is in the log: show it
+                self.log_pane.Expand()
+                self.layout_log()
             self.set_summary('Stopped.' if self.stopped else
                              (core.failure_line(self.log.GetValue().splitlines()) or 'Failed: see the log below.'), True)
-        self.folder_btn.Enable(os.path.isdir(os.path.join(self.out, 'results')))
-        self.run_dir_btn.Enable(os.path.isdir(self.out))
+        self.open_btn.Enable(os.path.isdir(self.out))
         self.grow()
 
     def show_result(self, mode, res, title):
@@ -655,8 +764,7 @@ class Kicad2antDialog(wx.Dialog):
             lines.append(GOOD)
         self.set_summary('\n'.join(([title] if title else []) + lines))
         self.set_pictures(core.result_pictures(self.out, name, mode))
-        self.folder_btn.Enable()
-        self.run_dir_btn.Enable()
+        self.open_btn.Enable()
         self.grow()
 
     def set_pictures(self, pics):
