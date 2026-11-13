@@ -1,6 +1,7 @@
 """Helpers for the kicad2ant KiCad plugin, free of wx and pcbnew so they can be tested on their own."""
-import glob, hashlib, os, re, shutil, signal, subprocess, sys, time
+import bisect, cmath, glob, hashlib, math, os, re, shutil, signal, subprocess, sys, time
 
+TOUCHSTONE_UNITS = {'HZ': 1.0, 'KHZ': 1e3, 'MHZ': 1e6, 'GHZ': 1e9}
 TARGET_DB = {'fast': 30.0, 'coarse': 40.0, 'fine': 50.0}   # openEMS end criterion 1e-3 / 1e-4 / 1e-5 in antenna_sim.m
 MODES = [   # (mode, what it does), in the order the plugin lists them; the same words are in kicad2ant.py --help and the README
     ('dry', 'Builds the model and draws it, no simulation. Do it first, to see the port and the ground.'),
@@ -193,6 +194,95 @@ def fit(w, h, box_w, box_h):
     """Picture size that fits the box with the aspect kept; never larger than the picture itself."""
     k = min(box_w / w, box_h / h, 1.0)
     return int(w * k), int(h * k)
+
+
+def read_s1p(path):
+    """(frequencies in Hz, complex S11 list, reference ohms) of a 1-port Touchstone file: any unit, RI / MA / DB."""
+    opt, f, s = 'GHZ S MA R 50', [], []   # the Touchstone default when there is no # line
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        for line in fh:
+            line = line.split('!')[0].strip()
+            if not line:
+                continue
+            if line[0] == '#':
+                opt = line[1:].upper()
+                continue
+            v = [float(x) for x in line.split()[:3]]
+            if len(v) == 3:
+                f.append(v[0])
+                s.append(v[1:])
+    tok = opt.split()
+    unit = next((u for u in tok if u in TOUCHSTONE_UNITS), 'GHZ')
+    z0 = float(tok[tok.index('R') + 1]) if 'R' in tok[:-1] else 50.0
+    if 'RI' in tok:
+        c = [complex(a, b) for a, b in s]
+    elif 'DB' in tok:
+        c = [cmath.rect(10 ** (a / 20), math.radians(b)) for a, b in s]
+    else:
+        c = [cmath.rect(a, math.radians(b)) for a, b in s]
+    return [x * TOUCHSTONE_UNITS[unit] for x in f], c, z0
+
+
+def s_at(f, s, x):
+    """S at x by straight-line interpolation between the file's points; None outside them."""
+    if not f or x < f[0] or x > f[-1]:
+        return None
+    i = min(bisect.bisect_left(f, x), len(f) - 1)
+    if i == 0 or f[i] == x:
+        return s[i]
+    t = (x - f[i - 1]) / (f[i] - f[i - 1])
+    return s[i - 1] + (s[i] - s[i - 1]) * t
+
+
+def readout(s, z0=50.0):
+    """'-12.4 dB  VSWR 1.63  Zin 41.2 +8.7j' for an S11 value."""
+    m = abs(s)
+    if m >= 1:
+        return '%.1f dB  (no match)' % (20 * math.log10(m))
+    z = z0 * (1 + s) / (1 - s)
+    return '%.1f dB  VSWR %.2f  Zin %.1f %+.1fj' % (20 * math.log10(max(m, 1e-12)), (1 + m) / (1 - m), z.real, z.imag)
+
+
+def hover_plot(path, run_dir):
+    """The readout data of a plot from its .txt beside it: {'box': (left, right, top, bottom) as picture fractions,
+    'xlim': (MHz, MHz), 'traces': [(name, (r, g, b) 0..1, f, s, z0)]}; None without one. Unreadable traces are left out."""
+    info = {'traces': []}
+    try:
+        with open(path, encoding='utf-8') as fh:
+            for line in fh:
+                key, _, rest = line.rstrip('\n').partition(' ')
+                if key == 'box':
+                    info['box'] = tuple(float(x) for x in rest.split())
+                elif key == 'xlim':
+                    info['xlim'] = tuple(float(x) for x in rest.split())
+                elif key == 'trace':
+                    head, _, rel = rest.partition('\t')
+                    r, g, b, name = head.split(' ', 3)
+                    try:
+                        f, s, z0 = read_s1p(os.path.join(run_dir, rel))
+                    except (OSError, ValueError):
+                        continue
+                    info['traces'].append((name, (float(r), float(g), float(b)), f, s, z0))
+    except (OSError, ValueError):
+        return None
+    return info if len(info.get('box', ())) == 4 and len(info.get('xlim', ())) == 2 and info['traces'] else None
+
+
+def hover_freq(info, u, v):
+    """MHz under the point (u, v), fractions of the picture from its left / top; None outside the plot area."""
+    left, right, top, bottom = info['box']
+    if not (left <= u <= right and top <= v <= bottom):
+        return None
+    return info['xlim'][0] + (u - left) / (right - left) * (info['xlim'][1] - info['xlim'][0])
+
+
+def hover_lines(info, mhz):
+    """[(text, colour)]: the frequency, then each trace's values there."""
+    out = [('%.1f MHz' % mhz, None)]
+    for name, col, f, s, z0 in info['traces']:
+        v = s_at(f, s, mhz * 1e6)
+        out.append(('%s: %s' % (name, readout(v, z0) if v is not None else 'no data here'), col))
+    return out
 
 
 def summary_lines(path):

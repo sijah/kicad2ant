@@ -6,6 +6,7 @@ import json, os, re, subprocess, sys, threading, time
 
 import pcbnew
 import wx
+import wx.adv
 
 try:
     from . import core
@@ -25,11 +26,35 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.3'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.4'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
 _dialog = None
+HOMEPAGE = 'https://github.com/sijah/kicad2ant'
+ABOUT = ('Simulates the printed antenna on this board in openEMS (FDTD): S11, Zin, the resonance and the -10 dB band, '
+         'and in Coarse / Fine also gain, efficiency and the pattern, with a .s1p for your RF tools.\n\n'
+         'The board is read as saved (a copy, with the zones filled): the antenna footprint\'s copper and the ground '
+         'net\'s zones, tracks and vias on every layer, the stackup and the Edge.Cuts outline. Copper is a '
+         'zero-thickness conductor; other nets, the parts and the solder mask are left out.\n\n'
+         'GPL-3.0-or-later. openEMS and CSXCAD: Thorsten Liebig and contributors. Ideas from kicad2ems and gerber2ems.')
+FOOTPRINT_RULES = (
+    ('Reference', 'AE1 or ANT1 (any number), or a footprint from a library with "antenna" in its name. Exactly one '
+                  'on the board, annotated (not ANT**). Another name works with Use selected pad.'),
+    ('Feed', 'Pad 1 is fed (or the pad you pick). Its net is your RF line, not GND.'),
+    ('Ground', 'Pad 2 on the GND net, or the shorting arm\'s copper reaching into the GND pour. The ground net is '
+               'pad 2\'s net, else GND, else a ground-named zone net.'),
+    ('Feed to ground', 'A straight GND edge across from pad 1 on the same layer, about 0.2 mm or more away (in-plane '
+                       'port), or a GND fill under pad 1 on another layer (vertical port, e.g. a microstrip feed). '
+                       'A diagonal ground or a corner stops the run.'),
+    ('Copper', 'All copper of the footprint on any layer is the antenna: lines, arcs, polygons, pads, custom pads, '
+               'footprint zones. Plated holes join the layers.'),
+    ('Under the antenna', 'No copper on any layer: put a keepout zone over the antenna area. Ground under the arm '
+                          'detunes it and kills the radiation.'),
+    ('Direction', 'Any board edge at 0, 90, 180 or 270 degrees gives the same result. Other angles mesh as a '
+                  'staircase: use Fine or a smaller cell.'),
+    ('Check it', 'Mode Check model draws the model in seconds: grey ground, orange antenna, magenta port on pad 1.'),
+)
 SIM_GROUPS = (('Sweep', ('f_start', 'f_stop', 'npts')), ('Mesh', ('cell', 'nmin', 'nz', 'merge', 'ratio', 'air')),
               ('Run', ('end_db', 'nrts', 'threads')), ('Far field', ('pattern', 'f_pat', 'pat_step')))
 
@@ -123,13 +148,16 @@ class Kicad2antDialog(wx.Dialog):
         self.summary_text = ''
         self.img = None   # the full-size wx.Image of the plot on the Results page
         self.pics = []
+        self.hover = None       # the S11 / Zin plot's readout data (core.hover_plot), when it has one
+        self.hover_at = None    # (x pixel, MHz) under the mouse
 
         self.book = wx.Notebook(self)
         run = wx.Panel(self.book)
         sim = wx.ScrolledWindow(self.book)
         resp = wx.Panel(self.book)
         setup = wx.Panel(self.book)
-        for page, label in ((run, 'Run'), (sim, 'Simulation'), (resp, 'Results'), (setup, 'Setup')):
+        about = wx.ScrolledWindow(self.book)
+        for page, label in ((run, 'Run'), (sim, 'Simulation'), (resp, 'Results'), (setup, 'Setup'), (about, 'About')):
             self.book.AddPage(page, label)
 
         # ---- Run: what to simulate, then run it
@@ -177,7 +205,7 @@ class Kicad2antDialog(wx.Dialog):
                                  'ABS about 3.0 / 0.01, PC 2.9 / 0.01, nylon 3.2-3.8 / 0.02. Plastic lowers the resonance.')
         vals = s['case_vals'] if len(s['case_vals']) == 6 else [d for _, d in core.CASE_FIELDS]
         self.case_vals = [wx.TextCtrl(run, value=str(v), size=(45, -1)) for v in vals]
-        case_row = wx.WrapSizer(wx.HORIZONTAL)   # the plastic fields wrap in a narrow window
+        case_row = wx.WrapSizer(wx.HORIZONTAL, 0)   # the plastic fields wrap in a narrow window; 0: no stretched last item
         case_row.Add(wx.StaticText(run, label='Board in'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         case_row.Add(self.case_ctl, 0, wx.RIGHT, 8)
         self.case_widgets = list(self.case_vals)   # shown only for a plastic case
@@ -198,7 +226,7 @@ class Kicad2antDialog(wx.Dialog):
         sim_row.Add(self.sim_line, 1, wx.ALIGN_CENTER_VERTICAL)
         sim_row.Add(edit, 0, wx.LEFT, 6)
 
-        self.view = wx.CheckBox(run, label="Open the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
+        self.view = wx.CheckBox(run, label="Show the 3D model (AppCSXCAD) as soon as it is built: Stop if the mesh or port looks wrong")
         self.view.SetValue(bool(s['view']))
         self.view.SetToolTip('The model exactly as openEMS gets it: copper, board, port and mesh lines. '
                              'With Check model it opens in seconds.')
@@ -271,6 +299,8 @@ class Kicad2antDialog(wx.Dialog):
         self.picture.Bind(wx.EVT_LEFT_DOWN, lambda e: self.img and core.open_folder(self.pics[self.plot_ctl.GetSelection()][1]))
         self.picture.Bind(wx.EVT_PAINT, self.on_paint_picture)
         self.picture.Bind(wx.EVT_SIZE, lambda e: (self.picture.Refresh(), e.Skip()))
+        self.picture.Bind(wx.EVT_MOTION, self.on_hover)
+        self.picture.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.set_hover(None))
         self.scaled = None   # (size, wx.Bitmap) of the last drawing
         plot_row = wx.BoxSizer(wx.HORIZONTAL)
         plot_row.Add(wx.StaticText(resp, label='Plot'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
@@ -345,6 +375,34 @@ class Kicad2antDialog(wx.Dialog):
         setup_box = wx.BoxSizer(wx.VERTICAL)
         setup_box.Add(sg, 0, wx.EXPAND | wx.ALL, 10)
         setup.SetSizer(setup_box)
+
+        # ---- About: what it is, and the antenna footprint it expects
+        name = wx.StaticText(about, label='%s %s' % (TITLE, VERSION))
+        name.SetFont(name.GetFont().Scaled(1.4).Bold())
+        intro = wx.StaticText(about, label=ABOUT)
+        intro.Wrap(600)
+        link = wx.adv.HyperlinkCtrl(about, label=HOMEPAGE, url=HOMEPAGE)
+        fp_title = wx.StaticText(about, label='The antenna footprint')
+        fp_title.SetFont(fp_title.GetFont().Bold())
+        self.fp_pic = wx.Panel(about, size=(600, 215))
+        self.fp_pic.Bind(wx.EVT_PAINT, self.on_paint_footprint)
+        rules = wx.FlexGridSizer(0, 2, 6, 14)
+        for what, how in FOOTPRINT_RULES:
+            w = wx.StaticText(about, label=what)
+            w.SetFont(w.GetFont().Bold())
+            h = wx.StaticText(about, label=how)
+            h.Wrap(460)
+            rules.Add(w)
+            rules.Add(h)
+        about_box = wx.BoxSizer(wx.VERTICAL)
+        about_box.Add(name, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        about_box.Add(intro, 0, wx.ALL, 10)
+        about_box.Add(link, 0, wx.LEFT | wx.BOTTOM, 10)
+        about_box.Add(fp_title, 0, wx.LEFT | wx.TOP, 10)
+        about_box.Add(self.fp_pic, 0, wx.ALL, 10)
+        about_box.Add(rules, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        about.SetSizer(about_box)
+        about.SetScrollRate(10, 10)
 
         top = wx.BoxSizer(wx.VERTICAL)
         top.Add(self.book, 1, wx.EXPAND | wx.ALL, 6)
@@ -529,6 +587,7 @@ class Kicad2antDialog(wx.Dialog):
         self.summary.SetLabel(self.summary_text)
         self.summary.Wrap(-1)   # wx 3.3 skips a Wrap() to the width it already has, even after a new label
         self.summary.Wrap(max(560, self.GetClientSize().width - 20))
+        self.summary.GetParent().Layout()   # more lines push the Plot row down instead of under the text
 
     def on_size(self, event):
         self.wrap_summary()
@@ -703,6 +762,7 @@ class Kicad2antDialog(wx.Dialog):
         left = core.time_left(self.samples, self.target)
         self.elapsed.SetLabel('%d:%02d' % (secs // 60, secs % 60) + ('' if left is None else '  ·  about %s left' % (
             '%d s' % left if left < 90 else '%d min' % round(left / 60))))
+        self.elapsed.GetContainingSizer().Layout()   # the label grows: give it the room, else '0:27' shows as '0:'
         log = os.path.join(self.out, 'sim_' + ('coarse' if self.mode == 'dry' else self.mode), 'openEMS.log')
         try:   # a log older than this run is the previous run's
             if os.path.getmtime(log) < self.started:
@@ -726,7 +786,8 @@ class Kicad2antDialog(wx.Dialog):
                     self.samples.append(e)
                 self.best = max(self.best, p)
                 self.gauge.SetValue(int(self.best * 1000))
-                self.phase.SetLabel('Converging: -%d of -%d dB' % (int(self.best * target), target))
+                db = int(self.best * target)
+                self.phase.SetLabel('Converging: -%d of -%d dB' % (db, target) if db else 'Simulating: the pulse is in')
             else:
                 ph = core.phase(line)
                 if ph:
@@ -779,8 +840,50 @@ class Kicad2antDialog(wx.Dialog):
         self.img = wx.Image(self.pics[i][1]) if self.pics and i >= 0 else None
         if self.img is not None and not self.img.IsOk():
             self.img = None
+        path = self.pics[i][1] if self.img is not None else ''
+        # the readout file beside the S11 / Zin picture names the traces by their place in the run folder
+        self.hover = core.hover_plot(path[:-4] + '.txt', os.path.dirname(os.path.dirname(path))) \
+            if path.endswith('_s11_zin.png') else None
+        self.picture.SetToolTip('Move over the plot for the values of every trace; click to open it full size.'
+                                if self.hover else 'Click to open the picture full size.')
+        self.hover_at = None
         self.scaled = None
         self.picture.Refresh()
+
+    def on_hover(self, event):
+        bmp = self.picture_bitmap()
+        if self.hover is None or bmp is None:
+            return
+        x, y = event.GetPosition()
+        mhz = core.hover_freq(self.hover, x / bmp.GetWidth(), y / bmp.GetHeight())
+        self.set_hover(None if mhz is None else (x, mhz))
+
+    def set_hover(self, at):
+        if at != self.hover_at:
+            self.hover_at = at
+            self.picture.Refresh()
+
+    def draw_hover(self, dc, bmp):
+        """A line at the mouse over both plots, and a box with each trace's values there in the trace's colour."""
+        x, mhz = self.hover_at
+        left, right, top, bottom = self.hover['box']
+        h = bmp.GetHeight()
+        dc.SetPen(wx.Pen(wx.Colour(90, 90, 90), 1, wx.PENSTYLE_SHORT_DASH))
+        dc.DrawLine(x, int(top * h), x, int(bottom * h))
+        lines = core.hover_lines(self.hover, mhz)
+        dc.SetFont(self.picture.GetFont())
+        sizes = [dc.GetTextExtent(t) for t, _ in lines]
+        w = max(a for a, _ in sizes) + 12
+        lh = max(b for _, b in sizes) + 2
+        bx = x + 12 if x + 12 + w <= bmp.GetWidth() else x - 12 - w   # beside the line ...
+        bx = max(0, min(bx, bmp.GetWidth() - w))                       # ... and inside the picture
+        by = int(top * h) + 4
+        dc.SetPen(wx.Pen(wx.Colour(120, 120, 120)))
+        dc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
+        dc.DrawRectangle(bx, by, w, lh * len(lines) + 8)
+        for k, (t, col) in enumerate(lines):
+            dc.SetTextForeground(wx.Colour(20, 20, 20) if col is None else wx.Colour(*(int(c * 200) for c in col)))
+            dc.DrawText(t, bx + 6, by + 4 + k * lh)
 
     def picture_bitmap(self):
         """The plot scaled to fit the picture panel (cached per panel size), or None."""
@@ -792,6 +895,35 @@ class Kicad2antDialog(wx.Dialog):
             self.scaled = size, wx.Bitmap(self.img.Scale(max(w, 1), max(h, 1), wx.IMAGE_QUALITY_HIGH))
         return self.scaled[1]
 
+    def on_paint_footprint(self, _):
+        """An IFA as kicad2ant wants it: pad 1 fed across a gap to a straight GND edge, pad 2 into the pour."""
+        dc = wx.PaintDC(self.fp_pic)
+        fg = self.fp_pic.GetForegroundColour()
+        dc.SetFont(self.fp_pic.GetFont())
+        dc.SetBrush(wx.Brush(wx.Colour(170, 170, 170)))   # GND pour
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.DrawRectangle(10, 140, 580, 70)
+        dc.SetBrush(wx.TRANSPARENT_BRUSH)   # keepout over the antenna
+        dc.SetPen(wx.Pen(fg, 1, wx.PENSTYLE_SHORT_DASH))
+        dc.DrawRectangle(10, 8, 580, 128)
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(wx.Brush(wx.Colour(217, 95, 30)))
+        dc.DrawRectangle(60, 50, 400, 7)     # radiating arm
+        dc.DrawRectangle(60, 50, 7, 98)      # shorting arm, into the pour
+        dc.DrawRectangle(130, 50, 7, 68)     # feed arm, stops short of the ground
+        dc.DrawRectangle(56, 140, 15, 15)    # pad 2
+        dc.DrawRectangle(126, 113, 15, 13)   # pad 1
+        dc.SetPen(wx.Pen(wx.Colour(230, 0, 230), 3))   # the port: pad 1 straight to the GND edge
+        dc.DrawLine(133, 126, 133, 140)
+        dc.SetTextForeground(fg)
+        dc.DrawText('keepout zone: no copper on any layer under the antenna', 150, 14)
+        dc.DrawText('radiating arm', 300, 64)
+        dc.DrawText('pad 1: feed (RF net)', 155, 88)
+        dc.DrawText('gap >= 0.2 mm (magenta: the port)', 155, 112)
+        dc.SetTextForeground(wx.Colour(20, 20, 20))
+        dc.DrawText('pad 2: GND (shorting arm)', 82, 158)
+        dc.DrawText('GND pour, a straight edge across from pad 1', 82, 182)
+
     def on_paint_picture(self, _):
         dc = wx.AutoBufferedPaintDC(self.picture)
         dc.SetBackground(wx.Brush(self.picture.GetParent().GetBackgroundColour()))
@@ -799,6 +931,8 @@ class Kicad2antDialog(wx.Dialog):
         bmp = self.picture_bitmap()
         if bmp is not None:
             dc.DrawBitmap(bmp, 0, 0)
+            if self.hover and self.hover_at:
+                self.draw_hover(dc, bmp)
 
     # ------------------------------------------------------------------ stop and close
 

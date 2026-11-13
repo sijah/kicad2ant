@@ -9,10 +9,11 @@ BOARD_kicad2ant/ next to the board (or --out): results/<REF>_<mode>_summary.txt 
 Put a VNA measurement there as measured.s1p (more as measured1.s1p, measured2.s1p ..) to overlay it. --post redoes only the post-processing.
 Finds Octave and openEMS itself; set OCTAVE / OPENEMS to override.
 """
-import argparse, glob, os, re, shutil, subprocess, sys
+import argparse, glob, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
+VERSION = '0.3.4'   # on every plot; build_pcm.py checks it against metadata.json
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('board'); ap.add_argument('ref', nargs='?', default='auto')
 ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fast',
@@ -31,7 +32,8 @@ ap.add_argument('--set', action='append', default=[], metavar='KEY=VALUE',
                      "mode's values are in mesher.py MODES (cell, nmin, nz, merge, ratio, air, f_start, f_stop, npts, "
                      'nrts, end_db, threads, pattern, f_pat, pat_step)')
 ap.add_argument('--post', action='store_true', help='only redo the post-processing on the saved fields')
-ap.add_argument('--view', action='store_true', help="open the 3D model in openEMS's viewer (AppCSXCAD) when the run ends")
+ap.add_argument('--view', action='store_true', help="open the 3D model in openEMS's viewer (AppCSXCAD) as soon as it is built, while openEMS runs: "
+                                                 "stop the run if the mesh or the port looks wrong")
 a = ap.parse_args()
 
 def octave():
@@ -94,6 +96,8 @@ if ' ' in ems: sys.exit(f'openEMS is in a path with a space ({ems}): nf2ff canno
 q = lambda s: s.replace("'", "''")
 # the run folder gets the whole model as .m files: antenna_geom.m, antenna_sim.m and run_sim.m, which reruns it in Octave
 shutil.copy(os.path.join(HERE, 'antenna_sim.m'), out)
+# the plot heading: the run folder's name without _kicad2ant (the plugin's board copy is always board.kicad_pcb)
+project = re.sub(r'_kicad2ant$', '', os.path.basename(out)) or os.path.splitext(os.path.basename(board))[0]
 with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
     f.write(f"% kicad2ant: this run's settings. In Octave, run this file to run it again.\n"
             f"% dry_run=1 builds the model only; skip_fdtd=1 redoes only the post-processing.\n"
@@ -102,20 +106,33 @@ with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
             f"f_lo={f_lo:.8g}; f_hi={f_hi:.8g}; npts={S['npts']}; nrts={S['nrts']}; end_crit={10 ** (S['end_db'] / 10):.6g}; "
             f"threads={S['threads']}; pattern={S['pattern']}; f_pat={S['f_pat'] * 1e6:.8g}; pat_step={S['pat_step']:g};\n"
             f"run_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"
+            f"project='{q(project)}'; k2a_ver='{VERSION}';\n"
             f"run(fullfile(run_dir, 'antenna_sim.m'))\n")
 script = f"run('{q(os.path.join(out, 'run_sim.m'))}')"
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display
 # one OpenBLAS thread: one per core fails to allocate its buffers on many-core machines ("Memory allocation still
 # failed"), and Octave's share of the work is light (openEMS has its own threads)
-r = subprocess.run([octave(), '--no-gui', '--eval', script], env=dict(os.environ, OPENBLAS_NUM_THREADS=os.environ.get('OPENBLAS_NUM_THREADS', '1')))
-if a.view and r.returncode == 0:
-    xml = os.path.join(out, 'sim_' + ('coarse' if a.mode == 'dry' else a.mode), 'antenna.xml')
+sim_dir = os.path.join(out, 'sim_' + ('coarse' if a.mode == 'dry' else a.mode))
+
+
+def view():
     exe = next((p for p in (os.path.join(ems, 'AppCSXCAD.exe'), os.path.join(ems, 'bin', 'AppCSXCAD')) if ems and os.path.isfile(p)),
                shutil.which('AppCSXCAD'))
     if exe:   # detached and off our pipes: it stays open after this script ends, and the caller is not kept waiting
         null = subprocess.DEVNULL
-        subprocess.Popen([exe, '--disableEdit', xml], cwd=os.path.dirname(exe), stdin=null, stdout=null, stderr=null,
-                         **({'creationflags': 0x00000008 | 0x00000200} if WIN else {'start_new_session': True}))
+        subprocess.Popen([exe, '--disableEdit', os.path.join(sim_dir, 'antenna.xml')], cwd=os.path.dirname(exe), stdin=null,
+                         stdout=null, stderr=null, **({'creationflags': 0x00000008 | 0x00000200} if WIN else {'start_new_session': True}))
+        print('3D model opened in AppCSXCAD: if the mesh or the port looks wrong, stop the run')
     else: print('warning: --view: AppCSXCAD (the openEMS 3D viewer) was not found')
-print(f'\nresults in {os.path.join(out, "results")}' if r.returncode == 0 else '\nfailed (see above)')
-sys.exit(r.returncode)
+
+
+p = subprocess.Popen([octave(), '--no-gui', '--eval', script], env=dict(os.environ, OPENBLAS_NUM_THREADS=os.environ.get('OPENBLAS_NUM_THREADS', '1')))
+shown = False
+while p.poll() is None:   # the model opens once openEMS starts (its log appears after antenna.xml is complete), not after the run
+    if a.view and not shown and os.path.isfile(os.path.join(sim_dir, 'openEMS.log')):
+        view(); shown = True
+    time.sleep(0.5)
+if a.view and not shown and p.returncode == 0:   # dry run and --post: no openEMS run, the model is there now
+    view()
+print(f'\nresults in {os.path.join(out, "results")}' if p.returncode == 0 else '\nfailed (see above)')
+sys.exit(p.returncode)

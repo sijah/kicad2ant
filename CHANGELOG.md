@@ -1,5 +1,32 @@
 # Changelog — kicad2ant
 
+## v0.3.4 (2026-11-13)
+
+### Added
+- Plugin About tab: what kicad2ant does, licence and credits, and how the antenna footprint should look (a drawing
+  of an IFA and a table: reference, feed pad, ground pad, feed-to-ground gap, keepout, direction).
+
+- Plugin Results tab: move the mouse over the S11 / Zin plot for the values at that frequency, for every trace
+  (the run, the measured files and the earlier runs): S11 dB, VSWR and Zin, read from the .s1p files (a small
+  `<REF>_<mode>_s11_zin.txt` beside the picture says where the plot is and which files it shows).
+- Every plot carries the project (board) name, the antenna and the mode as a heading, and
+  "kicad2ant <version> | openEMS FDTD | date" as a grey mark. `scripts/kicad2ant.py` has its own VERSION now,
+  checked by `build_pcm.py`.
+
+### Changed
+- `--view` / *Show the 3D model*: the model opens as soon as it is built, while openEMS runs, instead of when the
+  run ends. Stop the run if the mesh or the port looks wrong.
+- S11 plot: the legend is below the plot in one row (inside it covered the dip and the resonance mark), with the
+  file names without folder and `.s1p`; the simulation curve is drawn on top of the overlays.
+
+### Fixed
+- Plugin: the Results summary covered the Plot choice when it had more lines.
+- Plugin: the run time and time left were cut off ("0:" for "0:27") in a window at its normal size.
+- Plugin: the "Board in" choice stretched across the window when Air was chosen.
+- Plugin: before the energy starts to fall the progress says "Simulating" instead of "Converging: -0 of -30 dB".
+- Plots of an unannotated antenna (ANT**, named ANT__) printed "TeX parse error: syntax error" and drew the titles
+  wrong; titles now print the name as it is. The results were not affected.
+
 ## v0.3.3 (2026-11-13)
 
 ### Changed

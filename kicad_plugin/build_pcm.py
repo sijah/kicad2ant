@@ -13,6 +13,8 @@ with open(os.path.join(HERE, 'metadata.json'), encoding='utf-8') as f:
 version = meta['versions'][0]['version']
 src = open(os.path.join(PLUGIN, '__init__.py'), encoding='utf-8').read()
 assert "VERSION = '%s'" % version in src, 'set VERSION in kicad2ant_plugin/__init__.py to ' + version
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts', 'kicad2ant.py'), encoding='utf-8') as f:
+    assert "VERSION = '%s'" % version in f.read(), 'set VERSION in scripts/kicad2ant.py to ' + version   # on the plots
 files = {'metadata.json': os.path.join(HERE, 'metadata.json'),
          'plugins/LICENSE': os.path.join(ROOT, 'LICENSE'),
          'resources/icon.png': os.path.join(HERE, 'icon64.png'),

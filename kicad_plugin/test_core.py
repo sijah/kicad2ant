@@ -90,6 +90,29 @@ def test_default_band():
     assert core.default_band('') is None and core.default_band('x') is None
 
 
+def test_hover():
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, 'results'))
+    with open(os.path.join(d, 'results', 'A_fast.s1p'), 'w') as fh:   # S = 0 at 2400, 1/3 at 2500 MHz
+        fh.write('! sim\n# Hz S RI R 50\n2400000000 0 0\n2500000000 0.333333 0\n')
+    with open(os.path.join(d, 'm.s1p'), 'w') as fh:                    # MHz / DB form
+        fh.write('# MHZ S DB R 50\n2450 -20 180\n2460 -20 180\n')
+    with open(os.path.join(d, 'results', 'A_fast_s11_zin.txt'), 'w') as fh:
+        fh.write('box 0.1 0.9 0.1 0.9\nxlim 2400 2500\ntrace 0 0 0 simulation\tresults/A_fast.s1p\n'
+                 'trace 0 0.6 0 m\tm.s1p\ntrace 1 0 0 gone\tmissing.s1p\n')
+    info = core.hover_plot(os.path.join(d, 'results', 'A_fast_s11_zin.txt'), d)
+    assert [t[0] for t in info['traces']] == ['simulation', 'm']               # the missing file is left out
+    assert core.hover_freq(info, 0.5, 0.5) == 2450 and core.hover_freq(info, 0.05, 0.5) is None
+    assert abs(core.s_at(*info['traces'][0][2:4], 2450e6) - 1 / 6) < 1e-6 and core.s_at([1, 2], [0, 0], 3) is None
+    lines = core.hover_lines(info, 2500)
+    assert lines[0] == ('2500.0 MHz', None) and lines[1][0] == 'simulation: -9.5 dB  VSWR 2.00  Zin 100.0 +0.0j'
+    assert lines[2][0] == 'm: no data here'
+    f, s, z0 = core.read_s1p(os.path.join(d, 'm.s1p'))
+    assert f == [2450e6, 2460e6] and abs(s[0] - (-0.1)) < 1e-9 and z0 == 50
+    assert core.readout(1.0).endswith('(no match)')
+    assert core.hover_plot(os.path.join(d, 'nothing.txt'), d) is None
+
+
 def test_auto_pick():
     assert core.auto_pick([('ANT**', 'MyLib:IFA'), ('R1', 'Resistor_SMD:R_0402')]) == ('ANT**', None)
     assert core.auto_pick([('E1', 'RF_Antenna:Johanson_2450AT18')]) == ('E1', None)

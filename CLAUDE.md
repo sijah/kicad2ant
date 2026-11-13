@@ -40,8 +40,9 @@ macOS. A real simulation needs Octave and openEMS and is not in CI. To check a c
 - Model conventions: y up, z = 0 at the bottom copper, copper as zero-thickness PEC sheets, ground vias as
   PEC lines, air = max(5 mm, λ/4) with PML_8, excitation extends 30 % of the band past the top.
 - Only the antenna footprint and the ground net are modelled. Modelling other nets is out of scope.
-- When you bump the version, change `kicad_plugin/metadata.json`, `VERSION` in the plugin's `__init__.py` and
-  CHANGELOG.md together (the build checks the first two).
+- When you bump the version, change `kicad_plugin/metadata.json`, `VERSION` in the plugin's `__init__.py`,
+  `VERSION` in `scripts/kicad2ant.py` (it goes on every plot) and CHANGELOG.md together (the build checks the
+  first three).
 - GPL-3.0-or-later. Don't copy code from projects with incompatible licences. Ideas taken from kicad2ems
   and gerber2ems are credited in the README.
 

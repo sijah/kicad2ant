@@ -47,6 +47,17 @@ assert(exist(fullfile(here, 'antenna_geom.m'), 'file') == 2, 'no antenna_geom.m 
 physical_constants; unit = 1e-3;   % mm
 clear geom; run(fullfile(here, 'antenna_geom.m'));
 name = regexprep(geom.ref, '[^\w-]', '_');
+% every picture gets the project and the run as a heading, and the software and date as a grey mark
+if ~exist('project', 'var'), project = ''; end
+if ~exist('k2a_ver', 'var'), k2a_ver = ''; end
+heading = strjoin([{project}(~isempty(project)), {sprintf('%s  %s', geom.ref, res)}], '  |  ');
+mark = sprintf('kicad2ant %s  |  openEMS FDTD  |  %s', k2a_ver, datestr(now, 'yyyy-mm-dd HH:MM'));
+% stamp(h, y): the heading at height y (0.96 top; the small model picture has no room above its titles: 0.03,
+% just over the mark), the mark at the bottom left
+stamp = @(h, y) [annotation(h, 'textbox', [0.01 y 0.98 0.04], 'string', heading, 'edgecolor', 'none', 'fontsize', 10, ...
+                            'fontweight', 'bold', 'interpreter', 'none'), ...
+                 annotation(h, 'textbox', [0.01 0 0.98 0.03], 'string', mark, 'edgecolor', 'none', 'fontsize', 8, ...
+                            'color', [.55 .55 .55], 'interpreter', 'none')];
 
 %% parameters
 % the mesh itself is mesher.py's (cells per mode there)
@@ -143,7 +154,7 @@ for r = 1:2, for k = 1:nl
   end
   if r == 2, axis([fine(1) fine(3) fine(2) fine(4)]); end
 end, end
-print(h, fullfile(out, [name '_geometry.png']), '-dpng', '-r100');
+stamp(h, 0.03); print(h, fullfile(out, [name '_geometry.png']), '-dpng', '-r100');
 
 %% run
 Sim_Path = fullfile(here, ['sim_' res]); Sim_CSX = 'antenna.xml';
@@ -309,24 +320,37 @@ xr = [max(xr(1), freq(1)), min(xr(2), freq(end))] / 1e6;
 ylo = min(-40, 10*floor(s_min/10) - 5);
 h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 8]);   % 2000 x 1600 px at -r200: sharp when opened full size
 set(h, 'defaultaxesfontsize', 12, 'defaulttextfontsize', 12, 'defaultlinelinewidth', 2);
-subplot(2,1,1); hold on;
+a1 = subplot(2,1,1); hold on;
 patch(band_t([1 2 2 1])/1e6, [ylo ylo 0 0], [.85 .92 1], 'edgecolor', 'none');
 plot(xr, [-10 -10], 'r--', 'linewidth', 1);
 if s_min < -10, plot([freq(lo) freq(lo); freq(hi) freq(hi)]'/1e6, [ylo 0], 'r:', 'linewidth', 1); end
-hs = plot(freq/1e6, s11dB, 'k'); hm = [];
+hm = [];
 for q = 1:numel(M), hm(end+1) = plot(M{q}.f/1e6, 20*log10(abs(M{q}.s)), 'color', M{q}.c); end
+hs = plot(freq/1e6, s11dB, 'k');   % last: on top of an overlay that matches it
 if ~at_edge
   plot(f_res/1e6, s_min, 'o', 'color', 'k', 'markerfacecolor', 'r', 'markersize', 8);
   text(f_res/1e6, s_min, sprintf('  %.0f MHz, %.1f dB', f_res/1e6, s_min), 'verticalalignment', 'top');
 end
-if have_meas, legend([hs hm], [{'simulation'}, cellfun(@(m) m.name, M, 'uniformoutput', false)], 'location', 'southeast', 'interpreter', 'none'); end
+% under the plot, in one row: inside it covered the dip and the resonance mark; names without folder and .s1p
+if have_meas, legend([hs hm], [{'simulation'}, cellfun(@(m) regexprep(m.name, '^.*[\\/]|\.s1p$', ''), M, 'uniformoutput', false)], ...
+                     'location', 'southoutside', 'orientation', 'horizontal', 'interpreter', 'none'); end
 grid on; box on; ylabel('|S11| (dB)'); ylim([ylo 0]); xlim(xr);
-title(sprintf('%s %s: S11 (blue = target band, red = -10 dB)', name, res));
-subplot(2,1,2); plot(freq/1e6, real(Zin), 'b', freq/1e6, imag(Zin), 'r--'); hold on;
+title(sprintf('%s %s: S11 (blue = target band, red = -10 dB)', name, res), 'interpreter', 'none');   % ANT__: no TeX subscripts
+a2 = subplot(2,1,2); plot(freq/1e6, real(Zin), 'b', freq/1e6, imag(Zin), 'r--'); hold on;
 k = freq >= xr(1)*1e6 & freq <= xr(2)*1e6; zr = [real(Zin(k)) imag(Zin(k))];
 grid on; box on; xlabel('MHz'); ylabel('Z_{in} (\Omega)'); xlim(xr); title('Z_{in}: blue = Re, red dashed = Im');
 ylim([min(-50, min(zr)), max(100, max(zr))] .* [1.1 1.1]);
-print(h, fullfile(out, [name '_' res '_s11_zin.png']), '-dpng', '-r200');
+stamp(h, 0.96); print(h, fullfile(out, [name '_' res '_s11_zin.png']), '-dpng', '-r200');
+% for the plugin's readout under the mouse: the plot area in the picture (x from the left, y from the top, as
+% fractions: S11 top to Zin bottom), its MHz range, and the traces (colour, name, .s1p in the run folder)
+p1 = get(a1, 'position'); p2 = get(a2, 'position');
+fid = fopen(fullfile(out, [name '_' res '_s11_zin.txt']), 'w');
+if fid > 0
+  fprintf(fid, 'box %.5f %.5f %.5f %.5f\nxlim %.8g %.8g\n', p1(1), p1(1) + p1(3), 1 - p1(2) - p1(4), 1 - p2(2), xr);
+  fprintf(fid, 'trace 0 0 0 simulation\tresults/%s_%s.s1p\n', name, res);
+  for q = 1:numel(M), fprintf(fid, 'trace %g %g %g %s\t%s\n', M{q}.c, regexprep(M{q}.name, '^.*[\\/]|\.s1p$', ''), M{q}.name); end
+  fclose(fid);
+end
 
 % Smith chart of S11 (50 ohm): circle = f0, squares = target band edges
 h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 8 8]); hold on; axis equal; axis off;
@@ -343,8 +367,8 @@ plot(real(s11(i0)), imag(s11(i0)), 'ko', 'markerfacecolor', 'r');
 for bt = band_t, [~, k] = min(abs(freq - bt)); plot(real(s11(k)), imag(s11(k)), 'bs', 'markerfacecolor', 'b'); end
 if have_meas, legend([hs hm], [{'simulation'}, cellfun(@(m) m.name, M, 'uniformoutput', false)], 'location', 'southoutside', 'interpreter', 'none'); end
 title({sprintf('%s %s: S11 %.0f..%.0f MHz', name, res, freq(1)/1e6, freq(end)/1e6), ...
-       sprintf('red = %.0f MHz, blue = target band edges', f0/1e6)});
-print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r200');
+       sprintf('red = %.0f MHz, blue = target band edges', f0/1e6)}, 'interpreter', 'none');
+stamp(h, 0.96); print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-r200');
 
 if ~pattern, return; end
 h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 6]);
@@ -353,6 +377,6 @@ plot(tc,dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB
 grid on; xlim([-180 180]); ylim([-30 ceil(10*log10(D(ip))) + 2]);
 xlabel('angle (deg): \theta for xz / yz (negative = \phi+180 side), \phi for xy'); ylabel('directivity (dBi)');
 legend('xz (\phi = 0)', 'yz (\phi = 90)', 'xy (\theta = 90)', 'location', 'south');
-title(sprintf('%s %s: pattern cuts at %.0f MHz (x right, y up as in KiCad, z = top normal)', name, res, ffr(ip)/1e6));
-print(h, fullfile(out, [name '_' res '_pattern.png']), '-dpng', '-r200');
+title(sprintf('%s %s: pattern cuts at %.0f MHz (x right, y up as in KiCad, z = top normal)', name, res, ffr(ip)/1e6), 'interpreter', 'none');
+stamp(h, 0.96); print(h, fullfile(out, [name '_' res '_pattern.png']), '-dpng', '-r200');
 DumpFF2VTK(fullfile(out, [name '_' res '_pattern.vtk']), sph.E_norm{ip} / emax * D(ip), th, ph);
