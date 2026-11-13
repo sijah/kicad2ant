@@ -2,7 +2,7 @@
 
 It fills the zones, saves a copy of the board as it is on screen into the run folder and runs scripts/kicad2ant.py
 on that copy (the user's .kicad_pcb / .kicad_pro are never written). Progress comes from openEMS's own log file."""
-import json, os, re, subprocess, sys, threading, time
+import json, os, re, subprocess, sys, textwrap, threading, time
 
 import pcbnew
 import wx
@@ -15,24 +15,24 @@ except ImportError:   # loaded as a plain module (development)
 
 PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
-DEFAULTS = {'mode': 'fast', 'f0': '2440', 'lo': '', 'hi': '', 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False,
+DEFAULTS = {'mode': 'fast', 'f0': '2440', 'lo': '', 'hi': '', 'match': -10, 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False,
             'case': False, 'case_vals': [d for _, d in core.CASE_FIELDS], 'sim_sets': []}
 LABELS = {'dry': 'Check model (seconds)', 'fast': 'Fast: S11 only (about a minute)',
           'coarse': 'Coarse: S11, gain, pattern (minutes)', 'fine': 'Fine: final numbers (much longer)'}
 MODES = [(LABELS[m], m) for m, _ in core.MODES]   # (label, mode) in list order
 HELP = dict(core.MODES)
-GOOD = 'Good: the -10 dB band covers your target band.'
+GOOD = 'Good: S11 is below the match limit over your whole target band.'
 THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.7'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.8'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
 _dialog = None
 HOMEPAGE = 'https://github.com/sijah/kicad2ant'
-ABOUT = ('Simulates the printed antenna on this board in openEMS (FDTD): S11, Zin, the resonance and the -10 dB band, '
+ABOUT = ('Simulates the printed antenna on this board in openEMS (FDTD): S11, Zin, the resonance and the matched band, '
          'and in Coarse / Fine also gain, efficiency and the pattern, with a .s1p for your RF tools.\n\n'
          'The board is read as saved (a copy, with the zones filled): the antenna footprint\'s copper and the ground '
          'net\'s zones, tracks and vias on every layer, the stackup and the Edge.Cuts outline. Copper is a '
@@ -166,22 +166,12 @@ class Kicad2antDialog(wx.Dialog):
         self.mode_ctl.SetToolTip('\n'.join('%s: %s' % (label.split(':')[0].split(' (')[0], HELP[m]) for label, m in MODES))
         self.mode_ctl.Bind(wx.EVT_CHOICE, lambda e: self.on_mode())
         self.mode_help = wx.StaticText(run, label='')   # what the chosen mode does, in one line
-        self.f0 = wx.TextCtrl(run, value=s['f0'], size=(70, -1))
-        self.lo = wx.TextCtrl(run, value=s['lo'], size=(70, -1))
-        self.hi = wx.TextCtrl(run, value=s['hi'], size=(70, -1))
-        for c in (self.lo, self.hi):
-            c.SetToolTip('Target band in MHz. Leave empty for the default shown in grey: 2400 to 2483.5 at 2440 MHz, '
-                         'else f0 +/- 2 %.')
         self.gnd = wx.TextCtrl(run, size=(110, -1))
         self.gnd.SetHint('auto')
         self.gnd.SetToolTip('The ground net of this board. Leave empty: the net of the antenna\'s pad 2, else GND, '
                             'else the largest zone net with a ground name (AGND, GNDA, VSS ...).')
-        band = wx.BoxSizer(wx.HORIZONTAL)
-        band.Add(self.lo, 0, wx.ALIGN_CENTER_VERTICAL)
-        band.Add(wx.StaticText(run, label=' to '), 0, wx.ALIGN_CENTER_VERTICAL)
-        band.Add(self.hi, 0, wx.ALIGN_CENTER_VERTICAL)
         grid = wx.FlexGridSizer(0, 4, 6, 8)
-        for label, ctl in (('Mode', self.mode_ctl), ('f0 (MHz)', self.f0), ('Band (MHz)', band), ('Ground net', self.gnd)):
+        for label, ctl in (('Mode', self.mode_ctl), ('Ground net', self.gnd)):
             grid.Add(wx.StaticText(run, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctl, 0, wx.ALIGN_CENTER_VERTICAL)
 
@@ -229,7 +219,7 @@ class Kicad2antDialog(wx.Dialog):
         case_row.Add(mm, 0, wx.ALIGN_CENTER_VERTICAL)
         self.case_ctl.Bind(wx.EVT_CHOICE, lambda e: self.enable_case())
 
-        self.sim_line = wx.StaticText(run, label='')   # the Simulation tab's changes, so the mode label never misleads
+        self.sim_line = wx.StaticText(run, label='')   # the target band and the Simulation tab's changes
         edit = wx.Button(run, label='Edit')
         edit.Bind(wx.EVT_BUTTON, lambda e: self.book.SetSelection(1))
         sim_row = wx.BoxSizer(wx.HORIZONTAL)
@@ -315,17 +305,49 @@ class Kicad2antDialog(wx.Dialog):
         plot_row = wx.BoxSizer(wx.HORIZONTAL)
         plot_row.Add(wx.StaticText(resp, label='Plot'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         plot_row.Add(self.plot_ctl)
-        res_box = wx.BoxSizer(wx.VERTICAL)
-        res_box.Add(self.summary, 0, wx.ALL, 10)
-        res_box.Add(plot_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        res_box.Add(self.picture, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        resp.SetSizer(res_box)
+        info = wx.BoxSizer(wx.VERTICAL)
+        info.Add(self.summary, 0, wx.ALL, 10)
+        info.Add(plot_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        self.res_box = wx.BoxSizer(wx.VERTICAL)   # wrap_summary() turns it sideways in a wide window
+        self.res_box.Add(info, 0)
+        self.res_box.Add(self.picture, 1, wx.EXPAND | wx.ALL, 10)
+        resp.SetSizer(self.res_box)
 
         # ---- Simulation: the chosen mode's run settings (mesher.py MODES), in groups; changed ones in bold
         label_of = dict(core.SIM_FIELDS)
         self.sim_note = wx.StaticText(sim, label='')
         self.sim_ctl = {}
         groups = wx.BoxSizer(wx.VERTICAL)
+        sb = wx.StaticBoxSizer(wx.VERTICAL, sim, 'Target band')   # what the antenna is for: sets the sweep and the verdict
+        box = sb.GetStaticBox()
+        self.preset = wx.Choice(box, choices=[b[0] for b in core.BANDS] + ['Custom'])
+        self.preset.SetToolTip('Fills f0, the band and the match limit. Typing other values makes it Custom.')
+        self.preset.Bind(wx.EVT_CHOICE, lambda e: self.on_preset())
+        self.f0 = wx.TextCtrl(box, value=s['f0'], size=(80, -1))
+        self.f0.SetToolTip('Design frequency in MHz: the sweep is f0 +/- 40 % unless you set it below.')
+        self.lo = wx.TextCtrl(box, value=s['lo'], size=(80, -1))
+        self.hi = wx.TextCtrl(box, value=s['hi'], size=(80, -1))
+        for c in (self.lo, self.hi):
+            c.SetToolTip('Target band in MHz. Leave empty for the default shown in grey: the preset band at a preset '
+                         'f0, else f0 +/- 2 %.')
+            c.Bind(wx.EVT_TEXT, lambda e: self.on_band())
+        self.match = wx.Choice(box, choices=['%d dB (VSWR %s)' % (m, {-10: '1.9', -6: '3'}[m]) for m in core.MATCHES])
+        self.match.SetSelection(core.MATCHES.index(s['match']) if s['match'] in core.MATCHES else 0)
+        self.match.SetToolTip('S11 must be below this over the whole band. -10 dB is the usual limit at 2.4 GHz and up; '
+                              '-6 dB is usual for small sub-GHz and GNSS antennas.')
+        self.match.Bind(wx.EVT_CHOICE, lambda e: self.on_band())
+        band = wx.BoxSizer(wx.HORIZONTAL)
+        band.Add(self.lo, 0, wx.ALIGN_CENTER_VERTICAL)
+        band.Add(wx.StaticText(box, label=' to '), 0, wx.ALIGN_CENTER_VERTICAL)
+        band.Add(self.hi, 0, wx.ALIGN_CENTER_VERTICAL)
+        g = wx.FlexGridSizer(0, 2, 6, 10)
+        for label, ctl in (('Band', self.preset), ('f0 (MHz)', self.f0), ('Band (MHz)', band), ('Match limit', self.match)):
+            g.Add(wx.StaticText(box, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            g.Add(ctl, 0, wx.ALIGN_CENTER_VERTICAL)
+        sb.Add(g, 0, wx.ALL, 6)
+        self.band_note = wx.StaticText(box, label='')   # sub-GHz: the ground is part of the antenna
+        sb.Add(self.band_note, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        groups.Add(sb, 0, wx.EXPAND | wx.BOTTOM, 8)
         for title, keys in SIM_GROUPS:
             sb = wx.StaticBoxSizer(wx.VERTICAL, sim, title)
             box = sb.GetStaticBox()
@@ -430,6 +452,7 @@ class Kicad2antDialog(wx.Dialog):
         self.fill_sim(s['sim_sets'])
         self.f0.Bind(wx.EVT_TEXT, lambda e: self.on_f0())
         self.band_hints()
+        self.on_band()
         self.set_feed(None)
         self.enable_case()
         self.SetMinSize((600, -1))
@@ -452,7 +475,7 @@ class Kicad2antDialog(wx.Dialog):
 
     def settings(self):
         return {'mode': MODES[self.mode_ctl.GetSelection()][1], 'f0': self.f0.GetValue().strip(), 'lo': self.lo.GetValue().strip(),
-                'hi': self.hi.GetValue().strip(), 'octave': self.octave.GetValue().strip(),
+                'hi': self.hi.GetValue().strip(), 'match': self.match_db(), 'octave': self.octave.GetValue().strip(),
                 'openems': self.openems.GetValue().strip(), 'theme': self.theme_ctl.GetSelection(),
                 'outdir': self.outdir.GetValue().strip(), 'view': self.view.GetValue(),
                 'case': self.case_ctl.GetSelection() == 1, 'case_vals': [c.GetValue().strip() for c in self.case_vals],
@@ -496,11 +519,11 @@ class Kicad2antDialog(wx.Dialog):
         name = 'Coarse' if mode == 'dry' else mode.capitalize()
         try:
             sets = self.sim_sets(mode)
-            self.sim_line.SetLabel('Simulation: %d change%s from %s (%s)' % (len(sets), 's' * (len(sets) > 1), name,
-                                                                        core.describe_sets(sets))
-                                   if sets else 'Simulation: the %s values' % name)
+            line = ('Simulation: %d change%s from %s (%s)' % (len(sets), 's' * (len(sets) > 1), name, core.describe_sets(sets))
+                    if sets else 'Simulation: the %s values' % name)
         except ValueError:
-            self.sim_line.SetLabel('Simulation: a value is not valid, see the Simulation tab')
+            line = 'Simulation: a value is not valid, see the Simulation tab'
+        self.sim_line.SetLabel(self.band_text() + '\n' + line)
         self.sim_line.GetParent().Layout()
 
     def on_mode(self):
@@ -510,7 +533,44 @@ class Kicad2antDialog(wx.Dialog):
     def on_f0(self):
         self.follow_f0()
         self.band_hints()
+        self.on_band()
+
+    def on_band(self):
+        """Any target band field changed: the preset it now is (or Custom), the note, the Run tab line."""
+        i = core.band_preset(*(c.GetValue().strip() for c in (self.f0, self.lo, self.hi)))
+        if i is not None and i != self.preset.GetSelection():   # typed onto another preset: its match limit too
+            self.match.SetSelection(core.MATCHES.index(core.BANDS[i][4]))
+        self.preset.SetSelection(len(core.BANDS) if i is None else i)
+        self.band_note.SetLabel('\n'.join(textwrap.wrap(core.low_freq_note(self.f0.GetValue().strip()), 80)))
         self.sim_changed()
+        self.band_note.GetParent().GetParent().Layout()
+
+    def on_preset(self):
+        i = self.preset.GetSelection()
+        if i >= len(core.BANDS):   # Custom: keep the values to edit
+            return
+        _, f0, lo, hi, m = core.BANDS[i]
+        self.lo.ChangeValue('')   # empty: the preset band, shown in grey
+        self.hi.ChangeValue('')
+        self.match.SetSelection(core.MATCHES.index(m))
+        self.f0.ChangeValue('%g' % f0)
+        self.on_f0()   # sweep, hints, Run tab line
+
+    def match_db(self):
+        return core.MATCHES[self.match.GetSelection()]
+
+    def band_text(self):
+        """The target band for the Run tab, e.g. 'Band: 868 MHz SRD (EU, LoRa), 863..870 MHz, S11 below -6 dB'."""
+        f0, lo, hi = (c.GetValue().strip() for c in (self.f0, self.lo, self.hi))
+        i = core.band_preset(f0, lo, hi)
+        try:
+            b = (float(lo), float(hi)) if lo and hi else core.default_band(f0)
+        except ValueError:
+            b = None
+        if not b:
+            return 'Band: f0 or the band is not valid, see the Simulation tab'
+        name = core.BANDS[i][0] if i is not None else 'f0 %s MHz' % f0
+        return 'Band: %s, %g..%g MHz, S11 below %d dB' % (name, b[0], b[1], self.match_db())
 
     def band_hints(self):
         """The default target band, in grey in the empty band fields."""
@@ -606,7 +666,11 @@ class Kicad2antDialog(wx.Dialog):
     def wrap_summary(self):   # Wrap() puts line breaks into the label, so start again from the text
         self.summary.SetLabel(self.summary_text)
         self.summary.Wrap(-1)   # wx 3.3 skips a Wrap() to the width it already has, even after a new label
-        self.summary.Wrap(max(560, self.GetClientSize().width - 20))
+        w, h = self.GetClientSize()
+        side = w >= 1.6 * h   # wide (maximized): summary on the left, the plot gets the full height
+        self.res_box.SetOrientation(wx.HORIZONTAL if side else wx.VERTICAL)
+        # sideways: leave the plot (about 5:4) the width its full height needs, the text 300..520 px
+        self.summary.Wrap(int(min(520, max(300, w - 1.25 * (h - 60) - 40))) if side else max(560, w - 20))
         self.summary.GetParent().Layout()   # more lines push the Plot row down instead of under the text
 
     def on_size(self, event):
@@ -696,6 +760,7 @@ class Kicad2antDialog(wx.Dialog):
             if float(f0) <= 0 or bool(lo) != bool(hi) or (lo and float(lo) >= float(hi)):
                 raise ValueError
         except ValueError:
+            self.book.SetSelection(1)
             wx.MessageBox('f0 must be a frequency in MHz. The band needs both ends (from below to), or none.', TITLE)
             return
         case = ()
@@ -740,7 +805,7 @@ class Kicad2antDialog(wx.Dialog):
             self.set_feed(None)
         ref, num = self.feed if self.feed else ('auto', '')
         cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip(),
-                             self.view.GetValue(), case, sets)
+                             self.view.GetValue(), case, sets, self.match_db())
         self.out, self.mode, self.started = out, mode, time.time()
         self.target = None if mode == 'dry' else -float(self.sim_ctl['end_db'].GetValue())
         self.log_pos, self.log_rest, self.best, self.stopped, self.samples = 0, '', 0.0, False, []

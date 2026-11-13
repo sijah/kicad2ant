@@ -1,6 +1,6 @@
 """kicad2ant: simulate a PCB antenna from a KiCad board in openEMS.
 
-  python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|fast|coarse|fine] [--f0 MHz] [--band LO HI]
+  python kicad2ant.py BOARD.kicad_pcb [REF] [--mode dry|fast|coarse|fine] [--f0 MHz] [--band LO HI] [--match DB]
                       [--feed PAD] [--gnd NET] [--case ER TAND WALL SIDE TOP BOTTOM] [--out DIR]
                       [--set KEY=VALUE ...] [--post] [--view]
   python kicad2ant.py --check     which Octave and openEMS a run uses, and their versions
@@ -14,15 +14,18 @@ import argparse, glob, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
-VERSION = '0.3.7'   # on every plot; build_pcm.py checks it against metadata.json
+VERSION = '0.3.8'   # on every plot; build_pcm.py checks it against metadata.json
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('board', nargs='?'); ap.add_argument('ref', nargs='?', default='auto')
 ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fast',
                 help='dry: builds the model and draws it, no simulation; fast (default): rougher model, S11 / Zin / '
-                     'resonance / -10 dB band only, for each tuning step; coarse: also gain, efficiency and pattern, '
+                     'resonance / matched band only, for each tuning step; coarse: also gain, efficiency and pattern, '
                      'to confirm the variant you chose; fine: finer mesh, for the numbers you report')
 ap.add_argument('--f0', type=float, default=2440, help='design frequency, MHz (default 2440)')
-ap.add_argument('--band', type=float, nargs=2, metavar=('LO', 'HI'), help='target band, MHz (default 2400 2483.5 at 2.44 GHz, else f0 -/+ 2 %%)')
+ap.add_argument('--band', type=float, nargs=2, metavar=('LO', 'HI'),
+                help='target band, MHz (default: the band of a known f0, e.g. 2400 2483.5 at 2440, 863 870 at 868; else f0 -/+ 2 %%)')
+ap.add_argument('--match', type=float, help='match limit, dB: the band where S11 is below it must cover the target band '
+                '(default -6 below 2 GHz, -10 above; -6 dB is VSWR 3, -10 dB VSWR 1.9)')
 ap.add_argument('--feed', help='feed pad (default 1)'); ap.add_argument('--gnd', help='ground net (default: net of pad 2, else GND or the largest ground-named zone net)')
 ap.add_argument('--case', type=float, nargs=6, metavar=('ER', 'TAND', 'WALL', 'SIDE', 'TOP', 'BOTTOM'),
                 help='plastic case, a box shell around the board: epsR, loss tangent, wall thickness and the gaps to the '
@@ -119,7 +122,9 @@ if a.f0 < 100 and a.mode != 'dry':
     sys.exit(f'f0 {a.f0:g} MHz is below 100 MHz (NFC and other low-frequency loops): this time-domain run would need '
              'millions of steps and stop unconverged after hours. Not supported.')
 f0 = a.f0 * 1e6
-lo, hi = [b * 1e6 for b in a.band] if a.band else ((2400e6, 2483.5e6) if abs(f0 - 2.44e9) < 1e7 else (f0 * 0.98, f0 * 1.02))
+lo, hi = [b * 1e6 for b in a.band] if a.band else [b * 1e6 for b in core.default_band(a.f0)]
+match = a.match if a.match is not None else (-6 if a.f0 < 2000 else -10)
+if not -30 < match < 0: sys.exit(f'--match {match:g}: give a limit in dB between 0 and -30, e.g. -10 or -6')
 sys.path.insert(0, HERE)
 import mesher  # noqa: E402
 try:
@@ -127,7 +132,10 @@ try:
     f_lo, f_hi = mesher.sweep(S, f0)
     if f_lo >= f_hi: raise ValueError(f'sweep start {f_lo/1e6:g} MHz is not below its stop {f_hi/1e6:g} MHz')
 except ValueError as e: sys.exit(f'--set: {e}')
-if not a.band and a.f0 == 2440: print('target band 2400..2483.5 MHz (2.4 GHz ISM); give --f0 / --band for another', flush=True)
+preset = core.preset_of(a.f0)
+band_name = preset[0] if preset and not a.band else ''
+print(f'target band {lo/1e6:g}..{hi/1e6:g} MHz{" (" + band_name + ")" if band_name else ""}, S11 below {match:g} dB'
+      + ('; give --f0 / --band / --match for another' if not a.band else ''), flush=True)
 
 if not a.post:
     cmd = [sys.executable, os.path.join(HERE, 'extract_antenna.py'), board, a.ref, os.path.join(out, 'antenna_geom.m')]
@@ -150,7 +158,7 @@ with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
     f.write(f"% kicad2ant: this run's settings. In Octave, run this file to run it again.\n"
             f"% dry_run=1 builds the model only; skip_fdtd=1 redoes only the post-processing.\n"
             f"res='{'coarse' if a.mode == 'dry' else a.mode}'; dry_run={int(a.mode == 'dry')}; skip_fdtd={int(a.post)};\n"
-            f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}]; case_box=[{' '.join('%g' % v for v in a.case or [])}];\n"
+            f"f0={f0:.6g}; band_t=[{lo:.8g} {hi:.8g}]; match_db={match:g}; band_name='{q(band_name)}'; case_box=[{' '.join('%g' % v for v in a.case or [])}];\n"
             f"f_lo={f_lo:.8g}; f_hi={f_hi:.8g}; npts={S['npts']}; nrts={S['nrts']}; end_crit={10 ** (S['end_db'] / 10):.6g}; "
             f"threads={S['threads']}; pattern={S['pattern']}; f_pat={S['f_pat'] * 1e6:.8g}; pat_step={S['pat_step']:g};\n"
             f"run_dir=fileparts(mfilename('fullpath')); ems='{q(ems)}';\n"

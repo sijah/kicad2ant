@@ -5,7 +5,7 @@ TOUCHSTONE_UNITS = {'HZ': 1.0, 'KHZ': 1e3, 'MHZ': 1e6, 'GHZ': 1e9}
 TARGET_DB = {'fast': 30.0, 'coarse': 40.0, 'fine': 50.0}   # openEMS end criterion 1e-3 / 1e-4 / 1e-5 in antenna_sim.m
 MODES = [   # (mode, what it does), in the order the plugin lists them; the same words are in kicad2ant.py --help and the README
     ('dry', 'Builds the model and draws it, no simulation. Do it first, to see the port and the ground.'),
-    ('fast', 'Rougher model: S11, Zin, resonance and the -10 dB band, no gain or pattern. For each tuning step.'),
+    ('fast', 'Rougher model: S11, Zin, resonance and the matched band (S11 below -10 or -6 dB), no gain or pattern. For each tuning step.'),
     ('coarse', 'Also directivity, efficiency, gain and pattern. To confirm the variant you chose.'),
     ('fine', 'Finer mesh, runs to -50 dB. For the numbers you report.')]
 
@@ -19,7 +19,7 @@ ENERGY = re.compile(r"Timestep:\s*(\d+).*?\(\s*-\s*([\d.]+)\s*dB\)")
 PHASES = (('antenna footprint:', 'Reading the board'), ('Create FDTD operator', 'Meshing'),
           ('Running FDTD engine', 'Simulating'), ('openEMS running', 'Simulating'),
           ('Time for ', 'Post-processing'), ('nf2ff', 'Post-processing'))
-SUMMARY = ('board:', 'case:', 'fast (', 'resonance','min S11', 'S11 < -10', 'no -10 dB band', 'at ', 'run:')
+SUMMARY = ('board:', 'case:', 'fast (', 'resonance','min S11', 'S11 < -', 'no -', 'at ', 'run:')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
@@ -40,12 +40,25 @@ def energy(line):
 
 
 def default_band(f0):
-    """The target band kicad2ant.py checks when none is given, in MHz: Wi-Fi/BLE at 2440, else f0 -/+ 2 %; None for a bad f0."""
+    """The target band kicad2ant.py checks when none is given, in MHz: the BANDS preset at its f0 (2.4 GHz within
+    10 MHz of 2440), else f0 -/+ 2 %; None for a bad f0."""
+    b = preset_of(f0)
+    if b:
+        return (float(b[2]), float(b[3]))
     try:
         f = float(f0)
-    except ValueError:
+    except (TypeError, ValueError):
         return None
-    return (2400.0, 2483.5) if abs(f - 2440) < 10 else (round(f * 0.98, 1), round(f * 1.02, 1))
+    return (round(f * 0.98, 1), round(f * 1.02, 1))
+
+
+def preset_of(f0):
+    """The BANDS entry whose f0 this is (MHz), else None."""
+    try:
+        f = float(f0)
+    except (TypeError, ValueError):
+        return None
+    return next((b for b in BANDS if abs(f - b[1]) < (10 if b[1] == 2440 else 1e-6)), None)
 
 
 def time_left(samples, target_db):
@@ -118,6 +131,40 @@ SIM_FIELDS = [('f_start', 'Sweep start (MHz, default f0 - 40 %)'), ('f_stop', 'S
               ('f_pat', 'Pattern frequency (MHz, 0 = the resonance)'), ('pat_step', 'Pattern step (°)')]
 
 
+# the Simulation tab's target band presets: (label, f0, band lo, band hi, match limit dB), MHz.
+# -6 dB below 2 GHz: a small sub-GHz or GNSS antenna rarely reaches -10 dB over the band, and -6 dB (VSWR 3) is the
+# usual limit there; -10 dB (VSWR 1.9) above.
+BANDS = [('433 MHz ISM', 433.92, 433.05, 434.79, -6), ('868 MHz SRD (EU, LoRa)', 868, 863, 870, -6),
+         ('915 MHz ISM (US, LoRa)', 915, 902, 928, -6), ('GNSS L5 / E5a', 1176.45, 1164, 1189, -6),
+         ('GNSS L1 / E1', 1575.42, 1559, 1610, -6), ('2.4 GHz (BLE, Wi-Fi, Zigbee)', 2440, 2400, 2483.5, -10),
+         ('5 GHz Wi-Fi', 5500, 5150, 5850, -10), ('6 GHz Wi-Fi 6E', 6525, 5925, 7125, -10),
+         ('UWB channel 5', 6489.6, 6240, 6739, -10), ('UWB channel 9', 7987.2, 7738, 8237, -10)]
+MATCHES = (-10, -6)   # the match limits offered, dB
+
+
+def band_preset(f0, lo, hi):
+    """The index in BANDS of the preset these f0 / band fields (MHz, as typed) are, else None (custom). Empty band
+    fields are the default band for f0."""
+    try:
+        f = float(f0)
+        lo, hi = (float(lo), float(hi)) if lo and hi else default_band(f0)
+    except (TypeError, ValueError):
+        return None
+    return next((i for i, b in enumerate(BANDS) if (f, lo, hi) == tuple(map(float, b[1:4]))), None)
+
+
+def low_freq_note(f0):
+    """A warning for a sub-GHz f0 (MHz), else ''."""
+    try:
+        f = float(f0)
+    except ValueError:
+        return ''
+    if not 0 < f < 1000:
+        return ''
+    return ("Below 1 GHz: the board's ground is part of the antenna (a quarter wave is %.0f mm), so its size and "
+            "shape set the result; runs take several times longer than at 2.4 GHz." % (75000 / f))
+
+
 def auto_sweep(f0):
     """The default sweep (start, stop) in MHz for f0 in MHz, as the Simulation tab shows it: f0 -/+ 40 %, to 0.1 MHz.
     None when f0 is not a positive number."""
@@ -147,8 +194,11 @@ def sim_sets(values, defaults):
     return ['%s=%g' % (k, float(v)) for k, v in values.items() if float(v) != float(defaults[k])]
 
 
-def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd='', view=False, case=(), sets=()):
+def build_cmd(python, script, board_copy, out, mode, ref='auto', feed='', f0='', band=(), gnd='', view=False, case=(), sets=(),
+              match=None):
     cmd = [python, script, board_copy, ref or 'auto', '--mode', mode, '--out', out]
+    if match is not None:
+        cmd += ['--match', '%g' % match]
     if feed:
         cmd += ['--feed', feed]
     if f0:
@@ -368,8 +418,8 @@ def failure_line(lines):
 
 
 def band_covered(lines):
-    """Whether the summary says the -10 dB band covers the target band."""
-    return any(l.startswith('S11 < -10') and ' covers the ' in l for l in lines)
+    """Whether the summary says the matched band (S11 below the limit) covers the target band."""
+    return any(l.startswith('S11 < -') and ' covers the ' in l for l in lines)
 
 
 def find_python(exe=sys.executable, prefix=sys.prefix):

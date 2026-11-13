@@ -214,15 +214,32 @@ The fields:
 | Field | What it does | Default |
 |---|---|---|
 | Mode | Check model, Fast, Coarse or Fine (see [Which mode?](#which-mode)) | Fast |
-| f0 (MHz) | design frequency | 2440 |
-| Band from / to (MHz) | your target band. The result tells you if the −10 dB band covers it | 2400–2483.5 at 2440 MHz, otherwise f0 ± 2 % |
 | Ground net | the board's ground net | detected, see [below](#how-it-finds-the-antenna-the-feed-and-the-ground) |
 | Feed | click the feed pad in the editor, then *Use selected pad*. *Auto* resets it | pad 1 of the antenna footprint |
 | Octave | path to `octave-gui.exe` or `octave` | detected |
 | openEMS folder | where openEMS lives | detected |
 | Output in | where the `<board>_kicad2ant` run folder goes | next to the board file |
+| Simulation tab: Target band | a preset (table below) or Custom: f0, the band and the match limit. The result tells you if the band where S11 is below the limit covers your band. The Run tab shows it on the line above *Edit* | 2.4 GHz |
 | Show the 3D model… | opens the model in openEMS's viewer (AppCSXCAD) when the run finishes: copper, board, port and mesh. With *Check model* that's a few seconds | off |
 | Theme | System, Light or Dark | System |
+
+| Preset | f0 (MHz) | Band (MHz) | Match limit |
+|---|---|---|---|
+| 433 MHz ISM | 433.92 | 433.05–434.79 | −6 dB |
+| 868 MHz SRD (EU, LoRa) | 868 | 863–870 | −6 dB |
+| 915 MHz ISM (US, LoRa) | 915 | 902–928 | −6 dB |
+| GNSS L5 / E5a | 1176.45 | 1164–1189 | −6 dB |
+| GNSS L1 / E1 | 1575.42 | 1559–1610 | −6 dB |
+| 2.4 GHz (BLE, Wi-Fi, Zigbee) | 2440 | 2400–2483.5 | −10 dB |
+| 5 GHz Wi-Fi | 5500 | 5150–5850 | −10 dB |
+| 6 GHz Wi-Fi 6E | 6525 | 5925–7125 | −10 dB |
+| UWB channel 5 | 6489.6 | 6240–6739 | −10 dB |
+| UWB channel 9 | 7987.2 | 7738–8237 | −10 dB |
+
+The match limit is how low S11 must be over the whole band: −10 dB (VSWR 1.9, 90 % of the power accepted) is the
+usual figure at 2.4 GHz and up; −6 dB (VSWR 3, 75 %) is the usual one for small sub-GHz and GNSS antennas, which
+rarely reach −10 dB over the band. Below 1 GHz the board's ground is part of the antenna, so the result depends on
+the board's size, and runs take several times longer than at 2.4 GHz.
 
 During a run you see the current phase, a progress bar (taken from openEMS's log) and the elapsed time.
 **Stop** kills the run and everything it started. When it's done, the window shows the results and the S11
@@ -255,7 +272,7 @@ python scripts/kicad2ant.py myboard.kicad_pcb --mode dry                    # ch
 python scripts/kicad2ant.py myboard.kicad_pcb                               # fast: S11 only, under a minute
 python scripts/kicad2ant.py myboard.kicad_pcb --mode coarse                 # adds gain and pattern, minutes
 python scripts/kicad2ant.py myboard.kicad_pcb --mode fine                   # numbers you report
-python scripts/kicad2ant.py myboard.kicad_pcb AE2 --f0 868 --band 863 870   # another antenna and band
+python scripts/kicad2ant.py myboard.kicad_pcb AE2 --f0 868                   # another antenna, the 868 MHz band
 ```
 
 On Windows you can also drop a `.kicad_pcb` onto `scripts/kicad2ant.bat` for a fast 2.4 GHz run.
@@ -264,7 +281,8 @@ On Windows you can also drop a `.kicad_pcb` onto `scripts/kicad2ant.bat` for a f
 |---|---|
 | `REF` | the single footprint with an `AE*` / `ANT*` reference, or with "antenna" in its library name |
 | `--mode dry\|fast\|coarse\|fine` | `fast`. `dry` only builds the model and its picture |
-| `--f0 MHz`, `--band LO HI` | 2440 and 2400–2483.5. For any other f0 the band is f0 ± 2 % |
+| `--f0 MHz`, `--band LO HI` | 2440 and 2400–2483.5. At a preset's f0 (868, 915, 1575.42 …, table above) its band; for any other f0, f0 ± 2 % |
+| `--match DB` | −6 below 2 GHz, −10 above: S11 must be below it over the band |
 | `--feed PAD` | pad `1` of the antenna footprint |
 | `--gnd NET` | detected, see below |
 | `--case ER TAND WALL SIDE TOP BOTTOM` | none: the board in air. A plastic case as a box shell around the board: εr, loss tangent, wall thickness and the gaps to the board at the sides, on top (F.Cu side) and below, mm; e.g. `--case 3 0.01 2 1 1 1` for ABS. In the plugin: **Around the board: Plastic case** |
@@ -295,7 +313,7 @@ Everything lands in `<run folder>/results/`:
 | File | What it is |
 |---|---|
 | `<REF>_geometry.png` | the model, layer by layer. Look at this first |
-| `<REF>_<mode>_summary.txt` | resonance, −10 dB band vs. your target, Zin at f0, convergence, gain table (not in Fast) |
+| `<REF>_<mode>_summary.txt` | resonance, the matched band (S11 below the limit) vs. your target, Zin at f0, convergence, gain table (not in Fast) |
 | `<REF>_<mode>_s11_zin.png` | S11 and input impedance around f0, with the target band shaded and the resonance marked |
 | `<REF>_<mode>_smith.png` | Smith chart with f0 and band edges marked |
 | `<REF>_<mode>_pattern.png` | pattern cuts in the xz, yz and xy planes (not in Fast) |

@@ -86,7 +86,7 @@ def test_time_left():
 
 
 def test_default_band():
-    assert core.default_band('2440') == (2400.0, 2483.5) and core.default_band('868') == (850.6, 885.4)
+    assert core.default_band('2440') == (2400.0, 2483.5) and core.default_band('900') == (882.0, 918.0)
     assert core.default_band('') is None and core.default_band('x') is None
 
 
@@ -268,6 +268,20 @@ def test_board_line():
                             .replace('   addsublayer (thickness 0.3) (material "FR4") (epsilon_r 4.2) (loss_tangent 0.02)', ''))
     assert dflt['default'] and "KiCad's default stackup" in core.board_line(dflt)
     assert core.board_file_line('nope.kicad_pcb') == ''
+
+
+def test_bands():
+    assert core.BANDS[core.band_preset('2440', '', '')][0].startswith('2.4 GHz')
+    assert core.BANDS[core.band_preset('868', '863', '870')][4] == -6
+    assert core.default_band('868') == (863.0, 870.0) and core.default_band('1000') == (980.0, 1020.0)
+    assert core.default_band('2445') == (2400.0, 2483.5) and core.default_band('x') is None
+    assert core.band_preset('1000', '', '') is None and core.band_preset('x', '', '') is None
+    assert all(lo < f0 < hi and m in core.MATCHES for _, f0, lo, hi, m in core.BANDS)
+    assert '75 mm' not in core.low_freq_note('868') and '86 mm' in core.low_freq_note('868')
+    assert core.low_freq_note('2440') == '' and core.low_freq_note('') == ''
+    assert core.build_cmd('py', 'k.py', 'b', 'o', 'fast', match=-6)[8:10] == ['--match', '-6']
+    assert '--match' not in core.build_cmd('py', 'k.py', 'b', 'o', 'fast')
+    assert core.band_covered(['S11 < -6 dB: 860 .. 875 MHz, covers the 863.0..870.0 MHz target'])
 
 if __name__ == '__main__':
     for name, fn in sorted(globals().items()):

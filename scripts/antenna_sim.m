@@ -27,6 +27,8 @@ if ~exist('threads', 'var'), threads = 0; end        % openEMS threads, 0 = all
 if ~exist('f_pat', 'var'), f_pat = 0; end            % pattern frequency (Hz), 0 = the resonance
 if ~exist('pat_step', 'var'), pat_step = 5; end      % full-sphere far-field step (deg)
 if ~exist('band_t', 'var'), band_t = [2400 2483.5] * 1e6; end   % target band: marked on plots, checked in the summary
+if ~exist('match_db', 'var'), match_db = -10; end   % match limit (dB): the band with S11 below it must cover band_t
+if ~exist('band_name', 'var'), band_name = ''; end  % the preset's name, for the summary
 % plastic case: a box shell around the board [epsR tanD wall gap_side gap_top gap_bottom], mm, top = the F.Cu side;
 % [] = the bare board in air
 if ~exist('case_box', 'var'), case_box = []; end
@@ -156,7 +158,7 @@ for r = 1:2, for k = 1:nl
   end
   if r == 2, axis([fine(1) fine(3) fine(2) fine(4)]); end
 end, end
-stamp(h, 0.03); print(h, fullfile(out, [name '_geometry.png']), '-dpng', '-r100');
+stamp(h, 0.03); print(h, fullfile(out, [name '_geometry.png']), '-dpng', '-r250');   % sharp when the Results tab draws it large
 
 %% run
 Sim_Path = fullfile(here, ['sim_' res]); Sim_CSX = 'antenna.xml';
@@ -234,9 +236,9 @@ port = calcPort(port, Sim_Path, freq);
 s11 = port.uf.ref ./ port.uf.inc; Zin = port.uf.tot ./ port.if.tot;
 s11dB = 20*log10(abs(s11));
 % the resonance is the dip nearest f0, not the sweep's deepest point (a higher mode or the feed can be deeper):
-% a -10 dB dip nearest f0, else a dip standing >= 1 dB out of its shoulders nearest f0, else the deepest point
+% a dip below match_db nearest f0, else a dip standing >= 1 dB out of its shoulders nearest f0, else the deepest point
 im = find(s11dB(2:end-1) <= s11dB(1:end-2) & s11dB(2:end-1) < s11dB(3:end)) + 1;
-pick = im(s11dB(im) <= -10);
+pick = im(s11dB(im) <= match_db);
 if isempty(pick)
   for i = im
     l = i; while l > 1 && s11dB(l-1) >= s11dB(l), l = l - 1; end
@@ -248,9 +250,9 @@ if isempty(pick), [~, i_min] = min(s11dB);
 else, [~, k] = min(abs(freq(pick) - f0)); i_min = pick(k); end
 s_min = s11dB(i_min); f_res = freq(i_min);
 at_edge = i_min == 1 || i_min == numel(freq);
-lo = i_min; hi = i_min;            % the -10 dB band is the stretch around the minimum only
-while lo > 1 && s11dB(lo-1) < -10, lo = lo - 1; end
-while hi < numel(freq) && s11dB(hi+1) < -10, hi = hi + 1; end
+lo = i_min; hi = i_min;            % the matched band is the stretch around the minimum only
+while lo > 1 && s11dB(lo-1) < match_db, lo = lo - 1; end
+while hi < numel(freq) && s11dB(hi+1) < match_db, hi = hi + 1; end
 [~, i0] = min(abs(freq - f0));
 ix = find(diff(sign(imag(Zin))) ~= 0);              % reactance zero crossings
 f_x = freq(ix) - imag(Zin(ix)) .* (freq(ix+1) - freq(ix)) ./ (imag(Zin(ix+1)) - imag(Zin(ix)));
@@ -287,10 +289,12 @@ for fd = [1 fid]
   else
     fprintf(fd, 'resonance (min S11) %.1f dB at %.0f MHz\n', s_min, f_res/1e6);
   end
-  if s_min >= -10, fprintf(fd, 'no -10 dB band\n');
+  bn = ''; if ~isempty(band_name), bn = [' (' band_name ')']; end
+  if s_min >= match_db, fprintf(fd, 'no %g dB band\n', match_db);
   else
     verdict = {'MISSES', 'covers'}; covers = freq(lo) <= band_t(1) + (freq(2) - freq(1)) && freq(hi) >= band_t(2) - (freq(2) - freq(1));
-    fprintf(fd, 'S11 < -10 dB: %.0f .. %.0f MHz, %s the %.1f..%.1f MHz target\n', freq(lo)/1e6, freq(hi)/1e6, verdict{covers + 1}, band_t/1e6);
+    fprintf(fd, 'S11 < %g dB: %.0f .. %.0f MHz, %s the %.1f..%.1f MHz target%s\n', match_db, freq(lo)/1e6, freq(hi)/1e6, ...
+            verdict{covers + 1}, band_t/1e6, bn);
   end
   fprintf(fd, 'at %.0f MHz: S11 %.1f dB, Zin %.1f %+.1fj ohm\n', f0/1e6, s11dB(i0), real(Zin(i0)), imag(Zin(i0)));
   fprintf(fd, 'reactance crosses zero at: %s MHz\n', mat2str(round(f_x/1e6)));
@@ -316,17 +320,17 @@ fprintf(fid, '! %s openEMS %s: lumped port at the feed pad (%s), not de-embedded
 fprintf(fid, '%.0f %.6f %.6f\n', [freq; real(s11); imag(s11)]);
 fclose(fid);
 
-% S11 / Zin: f0 +/- 15 %, widened to the -10 dB band, within the sweep; target band shaded
+% S11 / Zin: f0 +/- 15 %, widened to the matched band, within the sweep; target band shaded
 xr = [f0*0.85, f0*1.15];
-if s_min < -10, xr = [min(xr(1), freq(lo)), max(xr(2), freq(hi))]; end
+if s_min < match_db, xr = [min(xr(1), freq(lo)), max(xr(2), freq(hi))]; end
 xr = [max(xr(1), freq(1)), min(xr(2), freq(end))] / 1e6;
 ylo = min(-40, 10*floor(s_min/10) - 5);
 h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 8]);   % 2000 x 1600 px at -r200: sharp when opened full size
 set(h, 'defaultaxesfontsize', 12, 'defaulttextfontsize', 12, 'defaultlinelinewidth', 2);
 a1 = subplot(2,1,1); hold on;
 patch(band_t([1 2 2 1])/1e6, [ylo ylo 0 0], [.85 .92 1], 'edgecolor', 'none');
-plot(xr, [-10 -10], 'r--', 'linewidth', 1);
-if s_min < -10, plot([freq(lo) freq(lo); freq(hi) freq(hi)]'/1e6, [ylo 0], 'r:', 'linewidth', 1); end
+plot(xr, [match_db match_db], 'r--', 'linewidth', 1);
+if s_min < match_db, plot([freq(lo) freq(lo); freq(hi) freq(hi)]'/1e6, [ylo 0], 'r:', 'linewidth', 1); end
 hm = [];
 for q = 1:numel(M), hm(end+1) = plot(M{q}.f/1e6, 20*log10(abs(M{q}.s)), 'color', M{q}.c); end
 hs = plot(freq/1e6, s11dB, 'k');   % last: on top of an overlay that matches it
@@ -338,7 +342,7 @@ end
 if have_meas, legend([hs hm], [{'simulation'}, cellfun(@(m) regexprep(m.name, '^.*[\\/]|\.s1p$', ''), M, 'uniformoutput', false)], ...
                      'location', 'southoutside', 'orientation', 'horizontal', 'interpreter', 'none'); end
 grid on; box on; ylabel('|S11| (dB)'); ylim([ylo 0]); xlim(xr);
-title(sprintf('%s %s: S11 (blue = target band, red = -10 dB)', name, res), 'interpreter', 'none');   % ANT__: no TeX subscripts
+title(sprintf('%s %s: S11 (blue = target band, red = %g dB)', name, res, match_db), 'interpreter', 'none');   % ANT__: no TeX subscripts
 a2 = subplot(2,1,2); plot(freq/1e6, real(Zin), 'b', freq/1e6, imag(Zin), 'r--'); hold on;
 k = freq >= xr(1)*1e6 & freq <= xr(2)*1e6; zr = [real(Zin(k)) imag(Zin(k))];
 grid on; box on; xlabel('MHz'); ylabel('Z_{in} (\Omega)'); xlim(xr); title('Z_{in}: blue = Re, red dashed = Im');

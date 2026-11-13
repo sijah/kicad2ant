@@ -3,7 +3,7 @@
 Simulate the PCB antenna on your KiCad board in [openEMS](https://openems.de), with no geometry entered
 by hand. Point it at the `.kicad_pcb` file and you get:
 
-- S11, input impedance and a Smith chart; the -10 dB band and whether it covers your target band
+- S11, input impedance and a Smith chart; the band where S11 is below the match limit (−10 dB, or −6 dB below 2 GHz) and whether it covers your target band
 - directivity, radiation efficiency, gain and realized gain across the band
 - pattern cuts at resonance, plus a 3-D pattern for ParaView
 - a Touchstone `.s1p` file for designing the match network

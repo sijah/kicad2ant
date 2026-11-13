@@ -1,5 +1,24 @@
 # Changelog — kicad2ant
 
+## v0.3.8 (2026-11-13)
+
+### Added
+- Target band presets: 433, 868 and 915 MHz, GNSS L1 and L5, 2.4 GHz, 5 and 6 GHz Wi-Fi, UWB channels 5 and 9, or
+  Custom. In the plugin they are in a **Target band** group on the Simulation tab, with f0, the band and the match
+  limit; the Run tab shows the band on the line above *Edit*. On the command line, `--f0` at a preset's frequency
+  takes its band.
+- Match limit, −10 dB (VSWR 1.9) or −6 dB (VSWR 3): S11 must be below it over the band. `--match DB`; the default is
+  −6 below 2 GHz, −10 above. The summary, the S11 plot's red line and the verdict use it.
+- A note for f0 below 1 GHz: the ground is part of the antenna and runs take longer.
+
+### Changed
+- Plugin: f0 and the band moved from the Run tab to the Simulation tab.
+- The model picture (`_geometry.png`) is saved at 250 dpi instead of 100 (about 1270 px instead of 510), so the
+  Results tab can draw it large in a maximized window.
+- Plugin Results tab: in a wide window (maximized, full screen) the summary and the Plot choice move to a column on
+  the left, so the plot fills the full height and grows (e.g. 920 x 740 to 1120 x 900 px on 1920 x 1080). A normal
+  window keeps the summary above the plot.
+
 ## v0.3.7 (2026-11-13)
 
 ### Added
