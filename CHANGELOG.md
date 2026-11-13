@@ -1,5 +1,12 @@
 # Changelog — kicad2ant
 
+## v0.3.6 (2026-11-13)
+
+### Fixed
+- Plugin window can be minimized (it had no minimize button). The toolbar button brings a minimized window back.
+- Setup tab sometimes showed "Octave (version unknown)": `octave --version` failed with OpenBLAS "Memory
+  allocation still failed" on many-core machines. The version check now uses one OpenBLAS thread, as runs do.
+
 ## v0.3.5 (2026-11-13)
 
 ### Added

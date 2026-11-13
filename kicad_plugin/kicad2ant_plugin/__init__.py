@@ -26,7 +26,7 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.5'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.6'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
@@ -127,7 +127,7 @@ def child_env(python, octave, openems=''):
 class Kicad2antDialog(wx.Dialog):
     def __init__(self, parent):
         super().__init__(parent, title='%s %s: antenna simulation' % (TITLE, VERSION),
-                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX)
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MINIMIZE_BOX | wx.MAXIMIZE_BOX)
         logo = wx.Image(LOGO) if os.path.isfile(LOGO) else None
         if logo is not None and logo.IsOk():
             self.SetIcon(wx.Icon(wx.Bitmap(logo)))
@@ -1008,6 +1008,7 @@ class Kicad2antPlugin(pcbnew.ActionPlugin):
             wx.MessageBox('Save the board once first.', TITLE)
             return
         if _dialog:
+            _dialog.Iconize(False)   # the toolbar button brings a minimized window back
             _dialog.Raise()
             return
         _dialog = Kicad2antDialog(wx.FindWindowByName('PcbFrame'))

@@ -14,7 +14,7 @@ import argparse, glob, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
-VERSION = '0.3.5'   # on every plot; build_pcm.py checks it against metadata.json
+VERSION = '0.3.6'   # on every plot; build_pcm.py checks it against metadata.json
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('board', nargs='?'); ap.add_argument('ref', nargs='?', default='auto')
 ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fast',
@@ -67,6 +67,11 @@ def openems():
         if hits: return sorted(hits)[-1]
     return ''   # Linux / macOS: openEMS already on the Octave path via .octaverc
 
+# one OpenBLAS thread: one per core fails to allocate its buffers on many-core machines ("Memory allocation still
+# failed"), even for octave --version, and Octave's share of the work is light (openEMS has its own threads)
+ENV = dict(os.environ, OPENBLAS_NUM_THREADS=os.environ.get('OPENBLAS_NUM_THREADS', '1'))
+
+
 def ems_exe(ems):
     return next((p for p in (os.path.join(ems, 'openEMS.exe'), os.path.join(ems, 'bin', 'openEMS')) if ems and os.path.isfile(p)),
                 shutil.which('openEMS'))
@@ -75,7 +80,7 @@ def ems_exe(ems):
 def version(cmd, pattern):
     """The version a program prints (Octave --version, openEMS's banner), '' if it does not run."""
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=30, stdin=subprocess.DEVNULL)
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=30, stdin=subprocess.DEVNULL, env=ENV)
     except (OSError, subprocess.SubprocessError):
         return ''
     m = re.search(pattern, r.stdout + r.stderr)
@@ -150,8 +155,6 @@ with open(os.path.join(out, 'run_sim.m'), 'w', encoding='utf-8') as f:
             f"run(fullfile(run_dir, 'antenna_sim.m'))\n")
 script = f"run('{q(os.path.join(out, 'run_sim.m'))}')"
 # --no-gui (qt toolkit) rather than octave-cli: only qt prints figures without a display
-# one OpenBLAS thread: one per core fails to allocate its buffers on many-core machines ("Memory allocation still
-# failed"), and Octave's share of the work is light (openEMS has its own threads)
 sim_dir = os.path.join(out, 'sim_' + ('coarse' if a.mode == 'dry' else a.mode))
 
 
@@ -167,7 +170,7 @@ def view():
 
 
 started = time.time()
-p = subprocess.Popen([OCTAVE, '--no-gui', '--eval', script], env=dict(os.environ, OPENBLAS_NUM_THREADS=os.environ.get('OPENBLAS_NUM_THREADS', '1')))
+p = subprocess.Popen([OCTAVE, '--no-gui', '--eval', script], env=ENV)
 shown = False
 while p.poll() is None:   # the model opens once openEMS starts (its log appears after antenna.xml is complete), not after the run
     if a.view and not shown:
