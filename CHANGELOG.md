@@ -1,5 +1,11 @@
 # Changelog — kicad2ant
 
+## v0.3.2 (2026-11-13)
+
+### Changed
+- Simulation tab: the sweep start and stop show the default sweep as numbers (f0 -/+ 40 %, 1464 / 3416 MHz at
+  2440 MHz) instead of 0, and follow f0 until you type your own.
+
 ## v0.3.1 (2026-11-13)
 
 ### Added

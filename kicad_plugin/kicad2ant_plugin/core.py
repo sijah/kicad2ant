@@ -68,13 +68,23 @@ def case_args(values):
 
 
 # the Simulation tab: (mesher.py MODES key, label); the pattern checkbox is the key 'pattern'
-SIM_FIELDS = [('f_start', 'Sweep start (MHz, 0 = f0 - 40 %)'), ('f_stop', 'Sweep stop (MHz, 0 = f0 + 40 %)'),
+SIM_FIELDS = [('f_start', 'Sweep start (MHz, default f0 - 40 %)'), ('f_stop', 'Sweep stop (MHz, default f0 + 40 %)'),
               ('npts', 'Frequency points'), ('cell', 'Largest cell on the antenna (mm)'),
               ('nmin', 'Least cells across a trace or gap'), ('merge', 'Merge mesh lines closer than (mm)'),
               ('nz', 'Least cells through the substrate'), ('ratio', 'Mesh grading ratio'),
               ('air', 'Air around the board (mm, 0 = max(5 mm, λ/4))'), ('nrts', 'Max timesteps'),
               ('end_db', 'End criterion (dB)'), ('threads', 'openEMS threads (0 = all)'),
               ('f_pat', 'Pattern frequency (MHz, 0 = the resonance)'), ('pat_step', 'Pattern step (°)')]
+
+
+def auto_sweep(f0):
+    """The default sweep (start, stop) in MHz for f0 in MHz, as the Simulation tab shows it: f0 -/+ 40 %, to 0.1 MHz.
+    None when f0 is not a positive number."""
+    try:
+        f = float(f0)
+    except ValueError:
+        return None
+    return (round(f * 0.6, 1), round(f * 1.4, 1)) if f > 0 else None
 
 
 def sim_sets(values, defaults):

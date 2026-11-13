@@ -75,6 +75,15 @@ def test_case():
     assert '--case' not in core.build_cmd('py', 'k.py', 'b', 'o', 'fast')
 
 
+def test_auto_sweep():
+    assert core.auto_sweep('2440') == (1464.0, 3416.0)
+    assert core.auto_sweep('868') == (520.8, 1215.2)
+    assert core.auto_sweep('') is None and core.auto_sweep('x') is None and core.auto_sweep('-5') is None
+    d = {'f_start': 1464.0, 'f_stop': 3416.0}   # the shown default sweep sends no --set
+    assert core.sim_sets({'f_start': '1464', 'f_stop': '3416'}, d) == []
+    assert core.sim_sets({'f_start': '2000', 'f_stop': '3416'}, d) == ['f_start=2000']
+
+
 def test_sim_sets():
     d = {'cell': 0.5, 'end_db': -30.0, 'pattern': 0}
     assert core.sim_sets({'cell': '0.5', 'end_db': '-40', 'pattern': '1'}, d) == ['end_db=-40', 'pattern=1']

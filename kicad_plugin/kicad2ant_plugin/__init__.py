@@ -26,7 +26,7 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.1'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.2'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
@@ -309,7 +309,9 @@ class Kicad2antDialog(wx.Dialog):
         sim_box.Add(rules, 0, wx.ALL, 10)
         sim.SetSizer(sim_box)
         sim.SetScrollRate(0, 10)
+        self.sweep_shown = None   # the default sweep the tab shows, to follow f0 until the user changes it
         self.fill_sim(s['sim_sets'])
+        self.f0.Bind(wx.EVT_TEXT, lambda e: self.follow_f0())
 
         top = wx.BoxSizer(wx.VERTICAL)
         top.Add(header, 0, wx.ALL, 10)
@@ -359,7 +361,7 @@ class Kicad2antDialog(wx.Dialog):
     def fill_sim(self, sets=()):
         """The Simulation tab shows the chosen mode's values, then the saved changes in sets (KEY=VALUE)."""
         mode = MODES[self.mode_ctl.GetSelection()][1]
-        v = dict(mode_values(mode))
+        v = self.sim_defaults(mode)
         for kv in sets:
             k, _, x = kv.partition('=')
             if k in v:
@@ -367,6 +369,7 @@ class Kicad2antDialog(wx.Dialog):
         for k, c in self.sim_ctl.items():
             c.SetValue('%g' % float(v[k]))
         self.pattern.SetValue(bool(float(v['pattern'])))
+        self.sweep_shown = core.auto_sweep(self.f0.GetValue().strip())
         self.sim_note.SetLabel('The values of the %s mode. Change any of them for your runs; changing the mode resets '
                                'them.' % ('coarse' if mode == 'dry' else mode))
 
@@ -374,9 +377,26 @@ class Kicad2antDialog(wx.Dialog):
         """The changed run settings as KEY=VALUE; ValueError when one is not a number or out of range."""
         vals = {k: c.GetValue().strip() for k, c in self.sim_ctl.items()}
         vals['pattern'] = str(int(self.pattern.GetValue()))
-        sets = core.sim_sets(vals, mode_values(mode))
+        sets = core.sim_sets(vals, self.sim_defaults(mode))
         mesher.settings('coarse' if mode == 'dry' else mode, sets)   # the same check kicad2ant.py makes
         return sets
+
+    def sim_defaults(self, mode):
+        """The mode's values, with the default sweep (0 in mesher.py) as numbers for the f0 on the Run tab."""
+        v = dict(mode_values(mode))
+        auto = core.auto_sweep(self.f0.GetValue().strip())
+        if auto and not v['f_start'] and not v['f_stop']:
+            v['f_start'], v['f_stop'] = auto
+        return v
+
+    def follow_f0(self):
+        """A new f0 moves the shown default sweep with it; a sweep the user typed stays."""
+        shown = tuple(c.GetValue().strip() for c in (self.sim_ctl['f_start'], self.sim_ctl['f_stop']))
+        auto = core.auto_sweep(self.f0.GetValue().strip())
+        if auto and self.sweep_shown and shown == tuple('%g' % x for x in self.sweep_shown):
+            self.sim_ctl['f_start'].ChangeValue('%g' % auto[0])
+            self.sim_ctl['f_stop'].ChangeValue('%g' % auto[1])
+            self.sweep_shown = auto
 
     def enable_case(self):
         for c in self.case_vals:
