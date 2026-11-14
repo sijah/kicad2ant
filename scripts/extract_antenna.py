@@ -379,12 +379,16 @@ for L, r in fills:
             wa, wb = win[ax], win[1 - ax]           # an edge that crosses the window counts, however long it is
             if (abs(a1 - a2) < 1e-4 and abs(b1 - b2) >= 0.05 and wa[0] <= a1 <= wa[1]
                     and min(b1, b2) <= wb[1] and max(b1, b2) >= wb[0]): pgnd[ax].add(round(a1, 4))
+# the ground copper's extent: without lines there a zone pulled back from the board edge ends on the board's coarse
+# cells (ti_ifa: ground to y = -29.8, last line on it -27.5; 7.8 mm at 868 MHz)
+gp = [p for _, r in fills for p in r]
+gext = [[f(p[k] for p in gp) for f in (min, max)] if gp else [] for k in (0, 1)]
 mx, my = sorted(hx), sorted(hy)
 
 # ---- grid lines (mesher.py) ---------------------------------------------------------------------
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mesher  # noqa: E402
-grid = mesher.build(a.mode, a.f0 * 1e6, box, [list(edge[0]), list(edge[1])], [mx, my], pline, [sorted(pgnd[0]), sorted(pgnd[1])],
+grid = mesher.build(a.mode, a.f0 * 1e6, box, [list(edge[0]), list(edge[1])], [mx + gext[0], my + gext[1]], pline, [sorted(pgnd[0]), sorted(pgnd[1])],
                     [l[:2] for l in lines], outline, list(cu_z.values()), diel, a.case, a.set)
 grid = {k: [round(v, 4) for v in grid[k]] for k in 'xyz'}   # what antenna_geom.m holds: check that, not the floats
 bad = mesher.check(grid, pline, list(cu_z.values()), diel)

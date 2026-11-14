@@ -191,4 +191,9 @@ for bad in (['bogus=1'], ['ratio=1'], ['end_db=5'], ['f_start=3000', 'f_stop=200
 assert mesher.sweep(mesher.settings('coarse'), 2.44e9) == (2.44e9 * 0.6, 2.44e9 * 1.4)
 r0, t0 = extract(board()); r1, t1 = extract(board(), '--set', 'cell=0.2')
 assert r1.returncode == 0 and len(get(t1, 'grid_x')) > len(get(t0, 'grid_x')), r1.stderr
+# 16. the ground copper's extent is on the grid, far from the antenna too (the zone ends 0.5 mm inside the board edge)
+gx, gy = get(t0, 'grid_x'), get(t0, 'grid_y')
+gp = [(float(x), float(y)) for s in re.findall(r"geom\.gnd\{end\+1\}.*?'pts', \[([^\]]*)\]", t0) for x, y in (q.split() for q in s.split(';'))]
+for f in (min, max):
+    assert min(abs(f(p[0] for p in gp) - v) for v in gx) < 1e-3 and min(abs(f(p[1] for p in gp) - v) for v in gy) < 1e-3, f
 print('OK')

@@ -92,7 +92,9 @@ def axis(keep, edges, other, sizes, merge, r=RATIO):
         hi = min([e for e in E if e >= b - 1e-9], default=None)
         if lo is not None and hi is not None: c = min(c, (hi - lo) / n)   # a trace or gap: at least n cells across
         c = min(max(c, merge), b - a)   # never below the merge distance: a 0.07 mm pad-to-trace step got 0.024 mm cells (AN1088)
-        s.append((b - a) / math.ceil((b - a) / c - 1e-9))   # the cell that fits whole: what the neighbours really meet
+        n = math.ceil((b - a) / c - 1e-9)   # the cell that fits whole: what the neighbours really meet
+        if merge: n = min(n, max(1, int((b - a) / merge + 1e-9)))   # rounding up split that 0.07 mm step into two 0.036 mm cells
+        s.append((b - a) / n)
     # the cell at each line: no bigger than a small cell elsewhere can grow to by then (cells grow by RATIO, so
     # about (RATIO - 1) * distance), so a short gap next to fine cells never has to end on a big cell
     h = [min(sj + (r - 1) * 0.9 * max(0.0, a - x, x - b) for sj, (a, b) in zip(s, gaps)) for x in H]

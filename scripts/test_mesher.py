@@ -21,6 +21,10 @@ assert v[0] == -10 and v[-1] == 10
 v = mesher.axis([], [1.0, 1.5], [0.9, -10, 10], big, mesher.MERGE)
 assert min(b - a for a, b in zip(v, v[1:])) >= 0.099, v
 
+# no cell below MERGE where the least-cells rule asks for one: a 0.072 mm step between two copper edges stays one cell
+v = mesher.axis([], [0.0, 0.072, 2.0], [-10, 10], lambda lo, hi: (0.5, 2), mesher.MERGE)
+assert cells_in(v, 0.0, 0.072) == 1 and min(q - p for p, q in zip(v, v[1:])) >= mesher.MERGE, v
+
 # repair(): a cell over 1.5 times its neighbour is halved, and the lines already there stay
 v = mesher.repair([0, 0.15, 0.3, 0.55, 0.8, 0.95])
 assert {0, 0.15, 0.3, 0.55, 0.8, 0.95} <= set(v) and mesher.ratio(v) <= 1.5, v

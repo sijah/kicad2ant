@@ -1,5 +1,19 @@
 # Changelog — kicad2ant
 
+## v0.3.9 (2026-11-14)
+
+### Fixed
+- Mesh: a gap between two copper edges of 0.05 to 0.10 mm was split into two cells below the 0.05 mm floor (a
+  0.072 mm pad-to-trace step on the Silicon Labs AN1088 boards gave 0.036 mm cells, in fast mode too). It is one
+  cell now, so the timestep on such boards is longer.
+- Mesh: the ground copper's extent is on the grid. A zone pulled back from the board edge ended on the board's
+  coarse cells before (up to 2.8 mm at 2.4 GHz, 7.8 mm at 868 MHz).
+- Plugin: a run stops with a message when the copy of the board cannot be saved, instead of simulating the copy an
+  earlier run left.
+- Plugin: the saved match limit is kept when the window opens (it went back to the preset's).
+- Plugin: *Use selected pad* refuses a pad with no number (pad 1 was fed instead, without a word).
+- Plugin: a run folder that cannot be made gives a message naming it.
+
 ## v0.3.8 (2026-11-13)
 
 ### Added

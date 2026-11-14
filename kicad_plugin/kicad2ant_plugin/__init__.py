@@ -26,7 +26,7 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '0.3.8'   # build_pcm.py checks it against metadata.json
+VERSION = '0.3.9'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
@@ -538,7 +538,8 @@ class Kicad2antDialog(wx.Dialog):
     def on_band(self):
         """Any target band field changed: the preset it now is (or Custom), the note, the Run tab line."""
         i = core.band_preset(*(c.GetValue().strip() for c in (self.f0, self.lo, self.hi)))
-        if i is not None and i != self.preset.GetSelection():   # typed onto another preset: its match limit too
+        was = self.preset.GetSelection()   # nothing chosen yet: the window is opening, the saved match limit stays
+        if i is not None and i != was and was != wx.NOT_FOUND:   # typed onto another preset: its match limit too
             self.match.SetSelection(core.MATCHES.index(core.BANDS[i][4]))
         self.preset.SetSelection(len(core.BANDS) if i is None else i)
         self.band_note.SetLabel('\n'.join(textwrap.wrap(core.low_freq_note(self.f0.GetValue().strip()), 80)))
@@ -716,6 +717,8 @@ class Kicad2antDialog(wx.Dialog):
         hit = selected_feed()
         if hit is None:
             wx.MessageBox('Nothing is selected. Click the feed pad of the antenna in the PCB editor first.', TITLE)
+        elif not hit[1]:   # an empty number would be sent as no --feed at all, and pad 1 fed instead
+            wx.MessageBox('The selected pad of %s has no number. Number the feed pad in the footprint, or select another.' % hit[0], TITLE)
         else:
             self.set_feed(hit[:2], hit[2])
 
@@ -787,7 +790,11 @@ class Kicad2antDialog(wx.Dialog):
         except ValueError:
             wx.MessageBox('Save the board once first.', TITLE)
             return
-        os.makedirs(out, exist_ok=True)
+        try:
+            os.makedirs(out, exist_ok=True)
+        except OSError as e:
+            wx.MessageBox('Cannot make the run folder:\n%s\n%s' % (out, e), TITLE, wx.ICON_WARNING)
+            return
         if core.lock_holder(out):   # another run, from this window or the command line
             wx.MessageBox('Another simulation is using this board folder:\n' + out, TITLE)
             return
@@ -799,7 +806,10 @@ class Kicad2antDialog(wx.Dialog):
             self.add_log('warning: the zone fill reported a problem')
         pcbnew.Refresh()
         copy = os.path.join(out, 'board.kicad_pcb')
-        pcbnew.SaveBoard(copy, board, True)   # True: leave the open project's settings where they are
+        if not pcbnew.SaveBoard(copy, board, True):   # True: leave the open project's settings where they are
+            self.phase.SetLabel('')   # an unsaved copy would leave the last run's board there to be simulated as this one
+            wx.MessageBox('Could not save a copy of the board to:\n' + copy, TITLE, wx.ICON_WARNING)
+            return
 
         if self.feed and self.feed_board != board.GetFileName():   # another board was opened under this window
             self.set_feed(None)
