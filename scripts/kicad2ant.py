@@ -14,7 +14,7 @@ import argparse, glob, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = os.name == 'nt'
-VERSION = '0.3.9'   # on every plot; build_pcm.py checks it against metadata.json
+VERSION = '0.3.10'   # on every plot; build_pcm.py checks it against metadata.json
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('board', nargs='?'); ap.add_argument('ref', nargs='?', default='auto')
 ap.add_argument('--mode', choices=('dry', 'fast', 'coarse', 'fine'), default='fast',

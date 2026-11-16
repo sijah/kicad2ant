@@ -1,5 +1,13 @@
 # Changelog — kicad2ant
 
+## v0.3.10 (2026-11-16)
+
+### Changed
+- Plugin mode list: Fast says "(minutes)" instead of "(about a minute)", and Coarse "(tens of minutes)" instead of
+  "(minutes)". Since the v0.3.9 mesh (at least 2 cells across a trace, grading 1.5), fast mode takes minutes:
+  `examples/ti_ifa` went from 21 s to 415 s. SKILL.md and docs/USAGE.md say the same.
+- Comments and docs no longer name the commercial reference tool used for validation.
+
 ## v0.3.9 (2026-11-14)
 
 ### Fixed
