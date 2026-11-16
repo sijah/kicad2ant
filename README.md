@@ -12,14 +12,15 @@ You can run it from a toolbar button in KiCad 10's PCB editor, from the command 
 
 | Model | Match | Pattern |
 |---|---|---|
-| ![geometry](examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_geometry.png) | ![S11 and Zin](examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_s11_zin.png) | ![pattern](examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_pattern.png) |
+| <img src="examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_geometry.png" alt="model" height="240"> | <img src="examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_s11_zin.png" alt="S11 and Zin" height="240"> | <img src="examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_pattern.png" alt="pattern" height="240"> |
 
 *From [examples/openems_ifa](examples/openems_ifa): the 2.45 GHz inverted-F antenna from openEMS's own
 `inverted_f.m` example, drawn as a KiCad board (coarse run). kicad2ant puts its resonance at 2438 MHz,
 openEMS's script at 2420 MHz. A meandered IFA from KiCad's footprint library is in
-[examples/ti_ifa](examples/ti_ifa).*
+[examples/ti_ifa](examples/ti_ifa), and [more example antennas](#example-antennas) are ready to simulate.*
 
-This is version 0.1.0 and still being tested. I develop it on Windows with KiCad 10.0.8, Octave 11.1 and
+kicad2ant is still being tested; see [CHANGELOG.md](CHANGELOG.md) for the current version. I develop it on
+Windows with KiCad 10.0.8, Octave 11.1 and
 openEMS v0.37. The Linux and macOS code paths are there but I haven't tried them yet. See
 [Known limits](#known-limits).
 
@@ -138,7 +139,8 @@ openEMS's `matlab` folder) was skipped or done in another Octave.
 
 ### Plugin and Content Manager
 
-1. Download `com.github.sijah.kicad2ant-0.1.0.zip` from [Releases](https://github.com/sijah/kicad2ant/releases),
+1. Download `com.github.sijah.kicad2ant-<version>.zip` from the latest
+   [release](https://github.com/sijah/kicad2ant/releases/latest),
    or build it with `python kicad_plugin/build_pcm.py` (the zip ends up in `dist/`).
 2. In KiCad, open the **Plugin and Content Manager**, click **Install from File…** and pick the zip.
 3. Open the PCB editor. The kicad2ant button is in the top toolbar and under **Tools → External Plugins**. If
@@ -292,6 +294,33 @@ On Windows you can also drop a `.kicad_pcb` onto `scripts/kicad2ant.bat` for a f
 
 Full option list and model details: [docs/USAGE.md](docs/USAGE.md).
 
+## Example antennas
+
+`examples/antenna_footprints.pretty/` is a KiCad footprint library of printed antennas: IFAs and meandered IFAs
+(TI, Silicon Labs and others), monopoles, a patch, a Yagi, a helical, a log-periodic and UWB antennas, from
+868 MHz to 10 GHz. Each footprint's description says what the antenna is and, where there is one, the app note
+it comes from and the board it was designed for. Each one also has a ready-made board in `examples/<name>/` that you can simulate straight away:
+
+```
+python scripts/kicad2ant.py examples/ti_dn007_ifa/ti_dn007_ifa.kicad_pcb --mode dry
+```
+
+### Starting from a footprint only
+
+`scripts/fp2board.py` puts an antenna footprint (`.kicad_mod`) on a bare board that kicad2ant can simulate. It's
+how the example boards were made:
+
+```
+python scripts/fp2board.py "My antenna.kicad_mod" --thickness 1.6 --er 4.4
+```
+
+Copper polygons holding a pad 2 become filled GND zones; without a pad 2, the largest polygon is the ground.
+The rest stays the antenna footprint `ANT1`, with pad 1 as the feed (net RF). The outline comes from F.Fab and
+the copper, and the board has 2 layers, or 4 when an inner layer is used. Board thickness, εr and tanδ default to
+1.6 mm, 4.5 and 0.02. Always do a `--mode dry` run on the result and check that the port sits on the feed. If it
+doesn't, `--list` numbers the copper polygons, `--feed-at X Y` places the feed pad, and `--ground I,J` makes more
+polygons ground. `python scripts/fp2board.py --help` lists every option.
+
 ## How it finds the antenna, the feed and the ground
 
 - Antenna: the one footprint whose reference is `AE` or `ANT` plus a number, or whose library name contains
@@ -344,7 +373,10 @@ Mention these whenever you share a result.
   timesteps there.
 - No spaces in the openEMS path or the run folder path. That's an openEMS limitation.
 - Fast and Coarse runs show trends. Do the final tuning on the real board with a VNA.
-- Not tested yet: Linux, macOS, paths with non-English characters, and KiCad's Flatpak build (not supported).
+- Not tested yet: Fine mode, Linux, macOS, paths with non-English characters, and KiCad's Flatpak build (not
+  supported).
+- The far field (directivity, efficiency, gain) can be off right at resonance on some boards; this is being
+  looked into. S11 and Zin are not affected.
 
 ## Troubleshooting
 
@@ -371,11 +403,12 @@ Anything else: click **Copy log** and paste the log into an issue.
 
 ```
 python scripts/test_extract.py     # board reader: stackup, outline, copper, ground, port, error messages
+python scripts/test_mesher.py      # mesh rules
 python kicad_plugin/test_core.py   # plugin helpers
 python kicad_plugin/build_pcm.py   # build the plugin package into dist/
 ```
 
-Both tests print `OK`, need only Python 3, and run on every push (`.github/workflows/test.yml`). The package
+The tests print `OK`, need only Python 3, and run on every push (`.github/workflows/test.yml`). The package
 uses KiCad's Plugin and Content Manager layout (`metadata.json`, `plugins/`, `resources/icon.png`). The build
 also writes `dist/metadata_gitlab_submission.json`, which is the metadata plus the download fields KiCad's
 addon repository wants.
@@ -384,12 +417,17 @@ addon repository wants.
 |---|---|
 | `scripts/kicad2ant.py` | command line: extracts, finds Octave and openEMS, runs |
 | `scripts/extract_antenna.py` | `.kicad_pcb` → `antenna_geom.m` |
-| `scripts/antenna_sim.m` | model, mesh, openEMS run, post-processing |
+| `scripts/mesher.py` | mesh lines from the copper edges, written into `antenna_geom.m` |
+| `scripts/antenna_sim.m` | model, openEMS run, post-processing |
+| `scripts/fp2board.py` | antenna footprint (`.kicad_mod`) → simulatable board |
 | `scripts/fp_tools.py` | tuning helpers for a board copy (runs in KiCad's Python): refill zones, save a board footprint to a library |
 | `kicad_plugin/kicad2ant_plugin/` | the plugin: `__init__.py` (window), `core.py` (helpers) |
 | `kicad_plugin/metadata.json`, `build_pcm.py` | package metadata and builder |
+| `examples/antenna_footprints.pretty/` | the example antenna footprint library |
+| `examples/<name>/` | a board per example antenna |
 | `examples/ti_ifa/` | example board with coarse results |
 | `examples/openems_ifa/` | openEMS's own `inverted_f.m` antenna as a KiCad board, with fast and coarse results |
+| `docs/` | `USAGE.md` (the model in detail), `ARCHITECTURE.md`, `MESHING.md` and `MESHER.md` (how the mesh is made) |
 | `SKILL.md` | the Claude Code skill |
 | `CHANGELOG.md` | changes per version |
 
