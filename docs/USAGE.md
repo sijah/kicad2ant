@@ -36,7 +36,7 @@ Physical Stackup. Without one, the board is taken as 2 layers of FR4 εr 4.5. Th
 
 ```
 python ../scripts/kicad2ant.py myboard.kicad_pcb --mode dry                 # check the model first
-python ../scripts/kicad2ant.py myboard.kicad_pcb                            # fast: S11 only, under a minute
+python ../scripts/kicad2ant.py myboard.kicad_pcb                            # fast: S11 only, minutes
 python ../scripts/kicad2ant.py myboard.kicad_pcb --mode coarse              # adds gain and pattern, minutes
 python ../scripts/kicad2ant.py myboard.kicad_pcb --mode fine                # numbers you quote
 python ../scripts/kicad2ant.py myboard.kicad_pcb AE2 --f0 868 --band 863 870   # other antenna / band

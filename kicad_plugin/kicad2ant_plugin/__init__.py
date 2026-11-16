@@ -17,8 +17,8 @@ PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
 DEFAULTS = {'mode': 'fast', 'f0': '2440', 'lo': '', 'hi': '', 'match': -10, 'octave': '', 'openems': '', 'theme': 0, 'size': None, 'outdir': '', 'view': False,
             'case': False, 'case_vals': [d for _, d in core.CASE_FIELDS], 'sim_sets': []}
-LABELS = {'dry': 'Check model (seconds)', 'fast': 'Fast: S11 only (about a minute)',
-          'coarse': 'Coarse: S11, gain, pattern (minutes)', 'fine': 'Fine: final numbers (much longer)'}
+LABELS = {'dry': 'Check model (seconds)', 'fast': 'Fast: S11 only (minutes)',
+          'coarse': 'Coarse: S11, gain, pattern (tens of minutes)', 'fine': 'Fine: final numbers (much longer)'}
 MODES = [(LABELS[m], m) for m, _ in core.MODES]   # (label, mode) in list order
 HELP = dict(core.MODES)
 GOOD = 'Good: S11 is below the match limit over your whole target band.'

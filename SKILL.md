@@ -88,7 +88,7 @@ Each shape change needs a new FDTD run (`--post` only redraws the same shape). K
    connected: say so, do not run it.
 4. **Run it into its own folder,** with the baseline's `REF`, `--f0`, `--band`, `--feed`, `--gnd`, `--case` and mode:
    `--out BOARD_try1_kicad2ant --mode dry` first and show the geometry picture, then the run.
-   Use `--mode fast` for each variant (under a minute on a small board): it gives the resonance shift.
+   Use `--mode fast` for each variant (a few minutes on a small board): it gives the resonance shift.
    One variant at a time, not in parallel; two runs in one run folder are refused.
 5. **Compare** with the baseline run in the same mode: resonance, S11 at f0, -10 dB band against the target.
    **Predict the next length, do not guess it.** Resonance goes nearly as 1/length, so with two runs of
