@@ -1,8 +1,10 @@
-AE1 fast run (0 s, 98 x 71 x 18 cells, smallest 0.291 mm)
-board: 2 copper layers, 1.500 mm, epsR 4.3; ground GND; port in-plane on F.Cu to the GND copper at (0.50, 0.00)
+AE1 fast run (57 s, 113 x 93 x 44 cells, smallest 0.250 mm)
+board: 1.535 mm, 2 copper layers, FR4 epsR 4.3, tanD 0.001
+model: 2 copper sheets over 1.465 mm of dielectric, epsR 4.3; ground GND; port in-plane on F.Cu to the GND copper at (0.50, 0.00)
+case: none, the board in air
 fast (S11 only, no far field): confirm with coarse
-resonance (min S11) -21.1 dB at 2408 MHz
-S11 < -10 dB: 2320 .. 2511 MHz, covers the 2401.0..2499.0 MHz target
-at 2450 MHz: S11 -16.0 dB, Zin 38.5 +8.1j ohm
-reactance crosses zero at: [2073 2420] MHz
-run: converged in 7548 steps; mesh worst neighbour ratio 4.07 (above 2: abrupt cell jump, check the fine run agrees)
+resonance (min S11) -26.9 dB at 2420 MHz
+S11 < -10 dB: 2306 .. 2555 MHz, covers the 2400.0..2483.5 MHz target (2.4 GHz (BLE, Wi-Fi, Zigbee))
+at 2440 MHz: S11 -23.6 dB, Zin 52.0 +6.4j ohm
+reactance crosses zero at: [2065 2413] MHz
+run: converged in 5640 steps; mesh worst neighbour ratio 1.30

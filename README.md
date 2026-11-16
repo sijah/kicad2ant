@@ -15,8 +15,8 @@ You can run it from a toolbar button in KiCad 10's PCB editor, from the command 
 | <img src="examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_geometry.png" alt="model" height="240"> | <img src="examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_s11_zin.png" alt="S11 and Zin" height="240"> | <img src="examples/openems_ifa/openems_ifa_kicad2ant/results/AE1_coarse_pattern.png" alt="pattern" height="240"> |
 
 *From [examples/openems_ifa](examples/openems_ifa): the 2.45 GHz inverted-F antenna from openEMS's own
-`inverted_f.m` example, drawn as a KiCad board (coarse run). kicad2ant puts its resonance at 2438 MHz,
-openEMS's script at 2420 MHz. A meandered IFA from KiCad's footprint library is in
+`inverted_f.m` example, drawn as a KiCad board (coarse run). kicad2ant and openEMS's script both put its
+resonance at 2420 MHz. A meandered IFA from KiCad's footprint library is in
 [examples/ti_ifa](examples/ti_ifa), and [more example antennas](#example-antennas) are ready to simulate.*
 
 kicad2ant is still being tested; see [CHANGELOG.md](CHANGELOG.md) for the current version. I develop it on
@@ -164,6 +164,20 @@ KiCad plans to drop the SWIG runtime in KiCad 11, so this version targets KiCad 
 The antenna has to be a footprint, either from KiCad's `RF_Antenna` library or one of your own. Open the board
 and click the kicad2ant button. The window stays open next to the editor.
 
+| Run | Simulation | Results |
+|---|---|---|
+| <img src="docs/images/plugin_run.png" alt="Run tab" height="300"> | <img src="docs/images/plugin_simulation.png" alt="Simulation tab" height="300"> | <img src="docs/images/plugin_results.png" alt="Results tab" height="300"> |
+
+The window has five tabs:
+
+| Tab | What's on it |
+|---|---|
+| **Run** | the mode, the antenna and its feed pad (*Use selected pad* / *Auto*), the **PCB** line (stackup read from the board), **Board in** air or a plastic case, **Simulate** / **Stop**, the phase, a progress bar and the elapsed time, and the log |
+| **Simulation** | **Target band**: a preset or Custom, with f0, the band and the match limit. Below it, the run settings for the chosen mode (sweep, mesh, timesteps, end criterion, threads, pattern), with **Reset to the mode values** |
+| **Results** | the summary and a **Plot** list: S11 / Zin, Smith, Pattern and Model. Point at the S11 plot to read the value at that frequency, and click a plot to open it full size. In a maximized window the summary moves to a column on the left |
+| **Setup** | the paths to Octave and openEMS with the versions found, **Run folders in**, the theme, and **Check again** |
+| **About** | the version and what kicad2ant needs from the antenna footprint |
+
 Check the **PCB** line on the Run tab first: the board thickness, copper layers, εr and tanδ the simulation will
 use, read from the saved board's stackup. Thickness and εr move the resonance a lot. If it says *no stackup set*
 or *KiCad's default stackup*, enter your fab's stackup in **Board Setup > Physical Stackup** and save. The same
@@ -172,9 +186,10 @@ line is in the results summary, and the plots carry it in their heading (e.g. `0
 1. Set **Mode** to *Check model* and click **Simulate**. A few seconds later you'll see the model, with the
    ground in grey, the antenna in orange and the port in magenta. Make sure the port is on the feed pad and the
    ground is where you expect. It's worth doing this every time.
-2. Switch to *Fast* and simulate. It gives S11, Zin, the resonance and the −10 dB band in seconds to a
-   minute, so use it for every tuning step.
-3. Use *Coarse* to confirm the version you settled on. It adds gain, efficiency and the pattern, and takes minutes.
+2. Switch to *Fast* and simulate. It gives S11, Zin, the resonance and the −10 dB band in one to a few
+   minutes, so use it for every tuning step.
+3. Use *Coarse* to confirm the version you settled on. It adds gain, efficiency and the pattern, and takes
+   several minutes to tens of minutes.
 4. Use *Fine* for the numbers you report. It takes much longer and can use several GB of memory on a big board.
 
 When a run ends the window switches to the **Results** tab: the summary, and a **Plot** list with S11 / Zin,
@@ -193,23 +208,25 @@ Measured on the two example boards (one run at a time, Windows laptop):
 
 | Board | Fast | Coarse |
 |---|---|---|
-| `examples/ti_ifa` | 26 s, resonance 2391 MHz | 8 min, 2413 MHz |
-| `examples/openems_ifa` | 13 s, 2408 MHz | 3.5 min, 2438 MHz |
+| `examples/ti_ifa` | 7 min, resonance 2418 MHz | 21 min, 2416 MHz |
+| `examples/openems_ifa` | 1 min, 2420 MHz | 5 min, 2420 MHz |
 
-Fast's resonance comes out about 1 % below Coarse.
+Fast and Coarse put the resonance within 0.1 % of each other. The time depends mostly on the smallest copper
+detail: `ti_ifa`'s narrow meander needs 0.1 mm cells and slowly ringing fields, while `openems_ifa` is simpler.
 
 `examples/openems_ifa` is the antenna from openEMS's own `inverted_f.m` example, drawn as a KiCad board, so
 the two can be compared directly:
 
 | | openEMS `inverted_f.m` | kicad2ant Coarse | kicad2ant Fast |
 |---|---|---|---|
-| resonance | 2420 MHz, −29.8 dB | 2438 MHz (+0.7 %), −28.2 dB | 2408 MHz (−0.5 %), −21.1 dB |
-| Zin at 2450 MHz | 49.4 + 8.3j Ω | 52.1 + 4.8j Ω | 38.5 + 8.1j Ω |
-| directivity, radiation efficiency | 2.55 dBi, 99 % | 2.83 dBi, 98–99 % | not computed |
+| resonance | 2420 MHz, −29.8 dB | 2420 MHz (0.0 %), −23.6 dB | 2420 MHz (0.0 %), −26.9 dB |
+| Zin at 2450 MHz | 49.4 + 8.3j Ω | 52.8 + 10.1j Ω | 50.9 + 8.7j Ω |
+| −10 dB band | | 2313–2545 MHz | 2306–2555 MHz |
+| directivity, radiation efficiency | 2.55 dBi, 99 % | 2.83 dBi, 99 % | not computed |
 
-Coarse lands within 1 % of openEMS's own model. Fast gets the resonance about right but the match and the
-impedance only roughly, which is why it's for tuning steps and not for the numbers you report. While tuning,
-compare Fast runs with Fast runs, then check the final version with Coarse.
+Both modes hit openEMS's own resonance, and Zin is within a few ohms. The depth of the dip differs (−24 to
+−30 dB), which hardly matters once S11 is that low. While tuning, compare Fast runs with Fast runs, then check
+the final version with Coarse, which adds gain and the pattern.
 
 The fields:
 
@@ -271,7 +288,7 @@ Fill the zones in KiCad (press **B**) and save first. Then:
 
 ```
 python scripts/kicad2ant.py myboard.kicad_pcb --mode dry                    # check the model first
-python scripts/kicad2ant.py myboard.kicad_pcb                               # fast: S11 only, under a minute
+python scripts/kicad2ant.py myboard.kicad_pcb                               # fast: S11 only, minutes
 python scripts/kicad2ant.py myboard.kicad_pcb --mode coarse                 # adds gain and pattern, minutes
 python scripts/kicad2ant.py myboard.kicad_pcb --mode fine                   # numbers you report
 python scripts/kicad2ant.py myboard.kicad_pcb AE2 --f0 868                   # another antenna, the 868 MHz band

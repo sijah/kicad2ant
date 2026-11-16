@@ -1,20 +1,22 @@
-AE1 coarse run (0 s, 143 x 109 x 40 cells, smallest 0.126 mm)
-board: 2 copper layers, 1.500 mm, epsR 4.3; ground GND; port in-plane on F.Cu to the GND copper at (0.50, 0.00)
-resonance (min S11) -28.2 dB at 2438 MHz
-S11 < -10 dB: 2325 .. 2570 MHz, covers the 2401.0..2499.0 MHz target
-at 2450 MHz: S11 -25.9 dB, Zin 52.1 +4.8j ohm
-reactance crosses zero at: [2075 2430] MHz
-run: converged in 13375 steps; mesh worst neighbour ratio 4.42 (above 2: abrupt cell jump, check the fine run agrees)
+AE1 coarse run (0 s, 175 x 126 x 51 cells, smallest 0.125 mm)
+board: 1.535 mm, 2 copper layers, FR4 epsR 4.3, tanD 0.001
+model: 2 copper sheets over 1.465 mm of dielectric, epsR 4.3; ground GND; port in-plane on F.Cu to the GND copper at (0.50, 0.00)
+case: none, the board in air
+resonance (min S11) -23.6 dB at 2420 MHz
+S11 < -10 dB: 2313 .. 2545 MHz, covers the 2400.0..2483.5 MHz target (2.4 GHz (BLE, Wi-Fi, Zigbee))
+at 2440 MHz: S11 -21.6 dB, Zin 54.0 +7.7j ohm
+reactance crosses zero at: [2067 2410] MHz
+run: converged in 12032 steps; mesh worst neighbour ratio 1.30
    f MHz  S11 dB   D dBi  rad eff %  gain dBi  realized gain dBi
-    1470    -0.4    2.49       108      2.84              -7.90  (mismatched: rad eff is rough)
-    1666    -0.6    2.99        96      2.83              -6.09  (mismatched: rad eff is rough)
-    1862    -1.0    3.01       100      3.03              -3.78  (mismatched: rad eff is rough)
-    2058    -2.2    2.81        99      2.75              -1.27  (mismatched: rad eff is rough)
-    2254    -6.3    2.76       100      2.78               1.61
-    2438   -28.2    2.83        98      2.77               2.76  <- pattern
-    2450   -25.9    2.84        99      2.78               2.77
-    2646    -7.1    2.88       100      2.90               1.95
-    2842    -4.2    2.66        99      2.60               0.54
-    3038    -3.3    2.64       100      2.65              -0.12
-    3234    -3.0    2.59        99      2.53              -0.46
-    3430    -2.8    2.86       100      2.88              -0.31  (mismatched: rad eff is rough)
+    1464    -0.4    2.43       112      2.91              -8.01  (mismatched: rad eff is rough)
+    1659    -0.6    3.01        95      2.81              -6.10  (mismatched: rad eff is rough)
+    1854    -1.0    3.02       101      3.06              -3.80  (mismatched: rad eff is rough)
+    2050    -2.2    2.84        99      2.79              -1.24  (mismatched: rad eff is rough)
+    2245    -6.4    2.75       100      2.76               1.62
+    2420   -23.6    2.83        99      2.77               2.76  <- pattern
+    2440   -21.6    2.84        99      2.78               2.75
+    2635    -6.6    2.87       101      2.90               1.84
+    2830    -4.0    2.65        99      2.60               0.39
+    3026    -3.1    2.63       101      2.66              -0.29
+    3221    -2.9    2.58        99      2.54              -0.61  (mismatched: rad eff is rough)
+    3416    -2.7    2.84       100      2.86              -0.46  (mismatched: rad eff is rough)

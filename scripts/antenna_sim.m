@@ -380,6 +380,7 @@ stamp(h, 0.96); print(h, fullfile(out, [name '_' res '_smith.png']), '-dpng', '-
 if ~pattern, return; end
 h = figure('visible', 'off', 'paperunits', 'inches', 'paperposition', [0 0 10 6]);
 set(h, 'defaultaxesfontsize', 12, 'defaulttextfontsize', 12);
+axes('position', [0.13 0.11 0.775 0.76]);   % room above the title for the heading
 plot(tc,dB(cut.E_norm{1}(:, 1)), 'b', tc, dB(cut.E_norm{1}(:, 2)), 'r--', tc, dB(cxy.E_norm{1}), 'k:', 'LineWidth', 2.5);
 grid on; xlim([-180 180]); ylim([-30 ceil(10*log10(D(ip))) + 2]);
 xlabel('angle (deg): \theta for xz / yz (negative = \phi+180 side), \phi for xy'); ylabel('directivity (dBi)');
