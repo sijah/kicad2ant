@@ -1,5 +1,15 @@
 # Changelog — kicad2ant
 
+## v0.3.11 (2026-11-16)
+
+### Fixed
+- Pattern plot: the board heading overlapped the plot title. The axes now sit lower, leaving room for the heading.
+
+### Changed
+- README: fast and coarse timings and the openEMS `inverted_f.m` comparison come from v0.3.10 runs; there's a
+  section on the plugin window with screenshots. The example results in `examples/ti_ifa` and `examples/openems_ifa`
+  come from the same runs.
+
 ## v0.3.10 (2026-11-16)
 
 ### Changed

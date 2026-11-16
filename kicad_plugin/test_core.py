@@ -143,9 +143,11 @@ def test_sim_sets():
 
 def test_summary_lines_real():
     assert core.summary_lines(REAL) == [
-        'resonance (min S11) -9.2 dB at 2413 MHz', 'no -10 dB band',
-        'at 2440 MHz: S11 -6.0 dB, Zin 20.6 +23.0j ohm',
-        'run: converged in 42292 steps; mesh worst neighbour ratio 3.40 (above 2: abrupt cell jump, check the fine run agrees)']
+        "board: 1.6 mm, 2 copper layers, FR4 epsR 4.5, tanD 0.02 (KiCad's default stackup: check it in Board Setup > Physical Stackup)",
+        'case: none, the board in air',
+        'resonance (min S11) -5.3 dB at 2416 MHz', 'no -10 dB band',
+        'at 2440 MHz: S11 -4.1 dB, Zin 20.0 +40.5j ohm',
+        'run: converged in 60516 steps; mesh worst neighbour ratio 1.50']
 
 
 def test_summary_lines_band_found():
