@@ -32,3 +32,9 @@ dist/
 metadata_gitlab_submission.json
 .superpowers/
 examples/private/
+
+# examples: kept locally for testing, not published
+*.kicad_prl
+examples/*/*_kicad2ant/
+examples/*/*_report.pdf
+examples/XML/
