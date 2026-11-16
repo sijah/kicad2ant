@@ -124,7 +124,7 @@ Going through the high-priority lines in sorted order (`antenna_sim.m:112-118`):
 
 | Run | Resonance | Min S11 | −10 dB band | Zin at 2450 MHz |
 |---|---|---|---|---|
-| a commercial EM tool / XML (reference) | 2446 MHz | −32.2 dB | 2364–2540 MHz | 47.2−j0.1 Ω |
+| Commercial EM tool / XML (reference) | 2446 MHz | −32.2 dB | 2364–2540 MHz | 47.2−j0.1 Ω |
 | kicad2ant coarse | 2469 MHz | −4.5 dB | none | 14.6+j19.1 Ω |
 | kicad2ant fine | 2547 MHz | −4.7 dB | none | 13.6+j11.6 Ω |
 | kicad2ant model on the reference mesh | 2452 MHz | −15.5 dB | 2368–2550 MHz | 37.1−j7.0 Ω |
@@ -167,7 +167,7 @@ Directivity, radiation efficiency and gain agreed with the reference in every ru
 
 ## 8. Reference mesh for comparison
 
-a commercial EM tool, Accurate preset, on the same antenna:
+A commercial EM tool, Accurate preset, on the same antenna:
 
 - Lines exactly on every copper edge.
 - 0.15 mm fill over the copper, so a 0.5 mm trace gets 4 cells across, with a centre line on the feed

@@ -10,7 +10,7 @@ of the other tools was run.
 ## 1. What the other projects do
 
 kicad2ant is GPL-3.0-or-later, so code from the GPL-3,
-Apache and MIT projects can be reused with credit. a commercial EM tool and the kicad_ems solver are closed:
+Apache and MIT projects can be reused with credit. A commercial EM tool and the kicad_ems solver are closed:
 take ideas from their manuals and outputs only.
 
 | Project (licence) | Lines at copper edges | Thin traces and gaps | Merge | Grading | z | Adaptive |

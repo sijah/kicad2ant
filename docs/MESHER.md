@@ -29,7 +29,7 @@ looks wider or narrower than drawn. Either way, the resonance moves and the matc
 **Why Python and not Octave:** the mesh decides the accuracy, so it must be tested. Python runs in CI on
 Linux, Windows and macOS without Octave or openEMS. Octave keeps the model build, the solver run and the
 post-processing. Converting to Octave was not the cause of the error. The reference XML ran in the same openEMS
-and matched reference exactly.
+and matched the reference exactly.
 
 ### 2.1 Inside `mesher.py`
 
@@ -74,13 +74,13 @@ Found on the TI AN043 MIFA (0.5 mm meandered traces) against a commercial EM too
 | Old mesh, fine | 2547 MHz | −4.7 dB |
 
 A bisection pinned down the causes. The kicad2ant model on the reference's mesh gave −15.5 dB at 2452 MHz, so the
-mesh was the main error. the reference's XML with kicad2ant's box port gave −21.2 dB, so the port was the second one.
+mesh was the main error. The reference XML with kicad2ant's box port gave −21.2 dB, so the port was the second one.
 
 | # | Problem | Effect |
 |---|---|---|
 | 1 | **Traces collapsed to one line.** The thirds-rule lines inside a 0.5 mm trace were 0.167 mm apart, exactly the merge distance, so they merged into one line. | The 0.5 mm arms became thin wires. |
 | 2 | **No line on the copper edge.** The edge came only from the thirds pair, which merging broke. | Traces looked wider or narrower than drawn, and different in different places. |
-| 3 | **No minimum cells across a trace or gap.** | 39 x lines over the antenna, against 111 for reference. |
+| 3 | **No minimum cells across a trace or gap.** | 39 x lines over the antenna, against 111 for the reference. |
 | 4 | **Cell jumps up to 4.35×.** A second merge pass after smoothing undid the smoothing. | Numerical reflections. |
 | 5 | **Fixed cell size**, whatever the geometry. Fine mode just made the same mistakes smaller. | Fine mode was no better than coarse. |
 | 6 | **Box port** over the whole 0.5 × 0.5 mm pad. | On its own, moved the reference from −32 to −21 dB. |
@@ -224,4 +224,4 @@ Ideas, not code, from:
 - kicad2ems: two-sided grading, merge by priority.
 - EMShrimulator: lines exactly on the edges, a minimum number of cells in a gap.
 - OpenEMSH: the thirds-collapse analysis.
-- a commercial EM tool's manual: 0.05 mm merge, 1.3 grading, line port.
+- A commercial EM tool's manual: 0.05 mm merge, 1.3 grading, line port.
