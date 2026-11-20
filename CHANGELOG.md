@@ -14,6 +14,9 @@
 - `scripts/fp_tools.py` (the tuning helpers) no longer needs KiCad's `pcbnew` module: it runs in any Python 3.
   `refill` calls `kicad-cli pcb drc --refill-zones --save-board`; `save-footprint` edits the footprint text the way
   KiCad's own footprint save does, checked against KiCad's output in `scripts/test_fp_tools.py`.
+- openEMS threads 0 (the default) now means half the logical CPUs, at most 6, instead of openEMS's own pick, which
+  chose 2-3 threads on a 16-thread laptop: printed IFA fast went from ~30 to ~44 MC/s.
+- The plugin shows the openEMS speed (MC/s) next to the progress.
 
 ## v1.0.0 (2026-11-20)
 

@@ -41,6 +41,7 @@ def main():
         say_without_wx('kicad2ant needs wxPython in the Python KiCad uses (%s): install python3-wxgtk4.0, '
                        'or set the interpreter in Preferences > Plugins.' % sys.executable)
         return 1
+    wx.Log.SetLogLevel(wx.LOG_Warning)   # wx's 'Adding duplicate image handler' debug notes, which KiCad shows as plugin messages
     import host
     if sys.platform == 'win32':   # its own taskbar button instead of being grouped under pythonw.exe
         import ctypes

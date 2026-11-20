@@ -78,6 +78,7 @@ def test_case():
 def test_time_left():
     line = "[@       12s] Timestep:         8056 || Speed:  164.9 MC/s (1.304e-03 s/TS) || Energy: ~1.42e-17 (-24.73dB)"
     assert core.energy(line) == (12, 24.73) and core.energy('Create FDTD operator') is None
+    assert core.speed(line) == 164.9 and core.speed('Create FDTD operator') is None
     assert core.energy(line.replace('[@       12s]', '[@     1m05s]'))[0] == 65   # openEMS's form after a minute
     assert core.energy(line.replace('[@       12s]', '[@  1h02m03s]'))[0] == 3723
     assert core.time_left([(4, 0.0), (8, 10.0), (12, 20.0), (16, 30.0)], 40) == 4.0   # 2.5 dB/s, 10 dB to go

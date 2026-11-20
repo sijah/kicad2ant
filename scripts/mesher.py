@@ -19,7 +19,7 @@ MERGE = 0.05    # mm: copper edges closer than this get one line (a commercial E
 # through a dielectric; merge: copper edges closer than this get one line (mm); ratio: largest neighbour cell ratio;
 # air: air around the board (mm, 0 = max(5 mm, lambda/4)); f_start / f_stop: the sweep (MHz, 0 = f0 -/+ 40 %).
 # run (antenna_sim.m): npts: sweep points; nrts: step limit; end_db: openEMS end criterion (always PML_8: MUR was 2.5 % off);
-# threads: openEMS threads (0 = all); pattern: far field (gain, efficiency, pattern); f_pat: pattern frequency (MHz,
+# threads: openEMS threads (0 = auto: half the logical CPUs, at most 6); pattern: far field (gain, efficiency, pattern); f_pat: pattern frequency (MHz,
 # 0 = the resonance); pat_step: full-sphere step (deg)
 _RUN = dict(merge=MERGE, ratio=RATIO, air=0.0, f_start=0.0, f_stop=0.0, npts=801, nrts=300000, threads=0,
             f_pat=0.0, pat_step=5.0)

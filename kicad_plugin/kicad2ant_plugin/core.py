@@ -39,6 +39,12 @@ def energy(line):
     return secs, float(m.group(2))
 
 
+def speed(line):
+    """openEMS solver speed in MC/s (million cells per second) from a 'Timestep' line, else None."""
+    m = re.search(r'Speed:\s*([\d.]+)\s*MC/s', line)
+    return float(m.group(1)) if m else None
+
+
 def default_band(f0):
     """The target band kicad2ant.py checks when none is given, in MHz: the BANDS preset at its f0 (2.4 GHz within
     10 MHz of 2440), else f0 -/+ 2 %; None for a bad f0."""
@@ -127,7 +133,7 @@ SIM_FIELDS = [('f_start', 'Sweep start (MHz, default f0 - 40 %)'), ('f_stop', 'S
               ('nmin', 'Least cells across a trace or gap'), ('merge', 'Merge mesh lines closer than (mm)'),
               ('nz', 'Least cells through the substrate'), ('ratio', 'Mesh grading ratio'),
               ('air', 'Air around the board (mm, 0 = max(5 mm, λ/4))'), ('nrts', 'Max timesteps'),
-              ('end_db', 'End criterion (dB)'), ('threads', 'openEMS threads (0 = all)'),
+              ('end_db', 'End criterion (dB)'), ('threads', 'openEMS threads (0 = auto)'),
               ('f_pat', 'Pattern frequency (MHz, 0 = the resonance)'), ('pat_step', 'Pattern step (°)')]
 
 

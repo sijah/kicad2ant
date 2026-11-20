@@ -945,7 +945,9 @@ class Kicad2antDialog(wx.Dialog):
                 self.best = max(self.best, p)
                 self.gauge.SetValue(int(self.best * 1000))
                 db = int(self.best * target)
-                self.phase.SetLabel('Converging: -%d of -%d dB' % (db, target) if db else 'Simulating: the pulse is in')
+                s = core.speed(line)
+                self.phase.SetLabel(('Converging: -%d of -%d dB' % (db, target) if db else 'Simulating: the pulse is in')
+                                    + ('' if s is None else '  ·  %.0f MC/s' % s))
             else:
                 ph = core.phase(line)
                 if ph:

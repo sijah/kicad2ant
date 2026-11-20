@@ -23,7 +23,10 @@ fc = (f_hi - f_lo) / 2;
 % the run settings kicad2ant.py writes into run_sim.m (mesher.py MODES, --set): these defaults are for a run by hand
 if ~exist('npts', 'var'), npts = 801; end            % sweep points
 if ~exist('nrts', 'var'), nrts = 300000; end         % step limit: a run that hits it did not converge (warned in the summary)
-if ~exist('threads', 'var'), threads = 0; end        % openEMS threads, 0 = all
+if ~exist('threads', 'var'), threads = 0; end        % openEMS threads, 0 = auto
+% auto: half the logical CPUs, at most 6. openEMS's own pick chose 2-3 threads on a 16-thread laptop and ran
+% ~45 % slower; FDTD is memory bound, so more than ~6 threads gains little
+if threads == 0, threads = min(6, max(1, floor(nproc() / 2))); end
 if ~exist('f_pat', 'var'), f_pat = 0; end            % pattern frequency (Hz), 0 = the resonance
 if ~exist('pat_step', 'var'), pat_step = 5; end      % full-sphere far-field step (deg)
 if ~exist('band_t', 'var'), band_t = [2400 2483.5] * 1e6; end   % target band: marked on plots, checked in the summary
