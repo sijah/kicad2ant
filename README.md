@@ -171,7 +171,7 @@ The window has five tabs:
 
 | Tab | What's on it |
 |---|---|
-| **Run** | the mode, the antenna and its feed pad (*Use selected pad* / *Auto*), the **PCB** line (stackup read from the board), **Board in** air or a plastic case, **Simulate** / **Stop**, the phase, a progress bar and the elapsed time, and the log |
+| **Run** | the mode, the antenna and its feed pad (*Use selected pad* / *Auto*), the **PCB** line (stackup read from the board), **Board in** air or a plastic case, **Simulate** / **Stop**, the phase, a progress bar, the openEMS speed (MC/s) and the elapsed time, and the log |
 | **Simulation** | **Target band**: a preset or Custom, with f0, the band and the match limit. Below it, the run settings for the chosen mode (sweep, mesh, timesteps, end criterion, threads, pattern), with **Reset to the mode values** |
 | **Results** | the summary and a **Plot** list: S11 / Zin, Smith, Pattern and Model. Point at the S11 plot to read the value at that frequency, and click a plot to open it full size. In a maximized window the summary moves to a column on the left |
 | **Setup** | the paths to Octave and openEMS with the versions found, **Run folders in**, the theme, and **Check again** |
@@ -259,7 +259,13 @@ usual figure at 2.4 GHz and up; −6 dB (VSWR 3, 75 %) is the usual one for smal
 rarely reach −10 dB over the band. Below 1 GHz the board's ground is part of the antenna, so the result depends on
 the board's size, and runs take several times longer than at 2.4 GHz.
 
-During a run you see the current phase, a progress bar (taken from openEMS's log) and the elapsed time.
+During a run you see the current phase, a progress bar (taken from openEMS's log), the solver speed in MC/s
+(million cells per second) and the elapsed time.
+
+**openEMS threads** (Simulation tab) is 0 by default: half the computer's logical CPUs, at most 6. openEMS is
+limited by memory speed, so more threads gain little. On a 16-thread laptop this ran about 1.5 to 2.7 times
+faster than letting openEMS choose (it picked 2 or 3 threads). Laptops slow down when hot: on charger, in the
+maker's performance mode, the speed holds better.
 **Stop** kills the run and everything it started. When it's done, the window shows the results and the S11
 plot. **Open results folder** takes you to the output files, and **Open run folder** to the model:
 
