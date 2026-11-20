@@ -8,6 +8,7 @@ from core import is_antenna_ref
 API_OFF = ('kicad2ant talks to KiCad through its API: turn on Preferences > Plugins > Enable KiCad API, '
            'then restart KiCad.')
 NO_BOARD = 'Open a board in the PCB editor first.'
+BUSY = 'KiCad is busy (filling zones?): try again when it is done.'
 AS_BUSY = 7   # kipy.proto.common.ApiStatusCode.AS_BUSY: KiCad answers this while the zone fill runs
 
 
@@ -18,6 +19,8 @@ class HostError(Exception):
 def _host_error(e):
     if type(e).__name__ == 'ConnectionError' or isinstance(e, OSError):   # kipy.errors.ConnectionError, or a dead pipe
         return HostError(API_OFF)
+    if getattr(e, 'code', None) == AS_BUSY:
+        return HostError(BUSY)
     return HostError('KiCad refused the request: %s' % e)
 
 
@@ -30,14 +33,17 @@ def connect():
     try:
         return kicad.get_board()
     except Exception as e:
-        if type(e).__name__ == 'ApiError':   # no PCB editor open
+        if type(e).__name__ == 'ApiError' and getattr(e, 'code', None) != AS_BUSY:   # no PCB editor open
             raise HostError(NO_BOARD) from None
         raise _host_error(e) from None
 
 
 def board_path(board):
     """The open board's file, '' while it has never been saved."""
-    return os.path.join(board.get_project().path, board.name) if board.name else ''
+    try:
+        return os.path.join(board.get_project().path, board.name) if board.name else ''
+    except Exception as e:
+        raise _host_error(e) from None
 
 
 def footprints(board):

@@ -20,6 +20,20 @@ def say_without_wx(msg):
         pass
 
 
+def raise_window(title):
+    """Bring the already open kicad2ant window forward (it is another process). Windows only; False elsewhere."""
+    if sys.platform != 'win32':   # shortcut: Linux/macOS get the "already open" message, add a socket ping if asked
+        return False
+    import ctypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW(None, title)
+    if not hwnd:
+        return False
+    user32.ShowWindow(hwnd, 9)   # SW_RESTORE: un-minimize
+    user32.SetForegroundWindow(hwnd)
+    return True
+
+
 def main():
     try:
         import wx
@@ -38,6 +52,8 @@ def main():
         app.SetAppearance((wx.App.Appearance.System, wx.App.Appearance.Light, wx.App.Appearance.Dark)[theme if theme in (0, 1, 2) else 0])
     one = wx.SingleInstanceChecker('kicad2ant-' + wx.GetUserId())
     if one.IsAnotherRunning():   # each toolbar press starts a new process; the open window is already there
+        if not raise_window('%s %s: antenna simulation' % (dialog.TITLE, dialog.VERSION)):
+            wx.MessageBox('kicad2ant is already open: find its window on the taskbar.', 'kicad2ant')
         return 0
     try:
         board = host.connect()

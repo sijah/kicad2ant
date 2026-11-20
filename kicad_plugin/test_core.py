@@ -425,6 +425,43 @@ def test_host_errors():
         assert 'no such path' in str(e)
 
 
+def test_connect_busy():   # KiCad answers AS_BUSY while it fills zones: say so, not "open a board"
+    class KiCad:
+        def get_board(self):
+            raise ApiError('busy', code=host.AS_BUSY)
+    old = sys.modules.get('kipy')
+    sys.modules['kipy'] = types.SimpleNamespace(KiCad=KiCad)
+    try:
+        host.connect()
+        raise AssertionError
+    except host.HostError as e:
+        assert str(e) == host.BUSY, e
+    finally:
+        if old is None: del sys.modules['kipy']
+        else: sys.modules['kipy'] = old
+    try:
+        host.fill_and_copy(FakeBoard(refill_raises=ApiError('busy', code=host.AS_BUSY)), 'c.kicad_pcb', poll=0)
+        raise AssertionError
+    except host.HostError as e:
+        assert str(e) == host.BUSY, e
+
+
+def test_board_path_kicad_gone():
+    class Gone(FakeBoard):
+        def get_project(self):
+            raise OSError('pipe')
+    try:
+        host.board_path(Gone())
+        raise AssertionError
+    except host.HostError as e:
+        assert 'Enable KiCad API' in str(e)
+
+
+def test_raise_window_none_open():   # no window to bring forward: the caller shows "already open" instead
+    import kicad2ant_ipc
+    assert kicad2ant_ipc.raise_window('kicad2ant no such window 0.0.0') is False
+
+
 PLUGIN = os.path.join(HERE, 'kicad2ant_plugin')
 
 

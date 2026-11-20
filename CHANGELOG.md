@@ -5,8 +5,9 @@
 ### Changed
 - The plugin runs through KiCad's IPC API (kicad-python), not the SWIG `pcbnew` module that KiCad 11 removes.
   Turn on Preferences > Plugins > Enable KiCad API. KiCad 10 and later.
-- The window is its own program now: it doesn't stay on top of KiCad, and a second press of the toolbar button
-  while it is open does nothing. It asks KiCad for the open board each time, so opening another board resets the
+- The window is its own program now: it doesn't stay on top of KiCad. A second press of the toolbar button
+  brings the open window forward (Windows), or says it is already open. It asks KiCad for the open board each
+  time, so opening another board resets the
   feed pick.
 - The zone fill runs in the open editor as before, and the board then shows as modified (`*`). Don't save it if you
   don't want the fills in your file.

@@ -446,8 +446,7 @@ class Kicad2antDialog(wx.Dialog):
         self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_SIZE, self.on_size)
-        self.Bind(wx.EVT_ACTIVATE, lambda e: (e.GetActive() and self.show_board(), self.feed is None and e.GetActive()
-                                              and self.set_feed(None), e.Skip()))
+        self.Bind(wx.EVT_ACTIVATE, self.on_activate)
         self.show_board()
         self.Bind(wx.EVT_WINDOW_DESTROY, self.on_destroy)
         self.show_previous()
@@ -673,10 +672,19 @@ class Kicad2antDialog(wx.Dialog):
         if not self.IsMaximized():
             self.SetSize(max(w, bw), max(h, bh))
 
-    def set_feed(self, feed, named=True):
+    def on_activate(self, e):
+        """Back in the window: the user may have opened another board. Ask KiCad once for both lines."""
+        if e.GetActive():
+            kb = self.kicad_board(quiet=True)
+            self.show_board(kb)
+            if self.feed is None:
+                self.set_feed(None, kb=kb)
+        e.Skip()
+
+    def set_feed(self, feed, named=True, kb=None):
         self.feed = feed
-        board = self.kicad_board(quiet=True)
-        self.feed_board = host.board_path(board) if board else None   # the pick belongs to this board only
+        board, path = kb or self.kicad_board(quiet=True)
+        self.feed_board = path if board else None   # the pick belongs to this board only
         try:
             fps = host.footprints(board) if board and feed is None else []
         except host.HostError:   # KiCad went away between the two calls
@@ -692,10 +700,9 @@ class Kicad2antDialog(wx.Dialog):
         self.feed_txt.SetLabel(text)
         self.Layout()
 
-    def show_board(self):
+    def show_board(self, kb=None):
         """The Run tab's Board line: thickness, layers, εr of the saved board file, read again only when it changed."""
-        board = self.kicad_board(quiet=True)
-        path = host.board_path(board) if board else ''
+        board, path = kb or self.kicad_board(quiet=True)
         try:
             seen = (path, os.path.getmtime(path))
         except OSError:
@@ -709,16 +716,18 @@ class Kicad2antDialog(wx.Dialog):
             self.Layout()
 
     def kicad_board(self, quiet=False):
-        """The board open in KiCad now (asked each time: the user may have opened another), or None with a message."""
+        """(the board open in KiCad now, its file or '' if never saved), asked each time since the user may have
+        opened another; (None, '') with a message when KiCad does not answer."""
         try:
-            return host.connect()
+            board = host.connect()
+            return board, host.board_path(board)
         except host.HostError as e:
             if not quiet:
                 wx.MessageBox(str(e), TITLE, wx.ICON_WARNING)
-            return None
+            return None, ''
 
     def on_use_selected(self, _):
-        board = self.kicad_board()
+        board, _ = self.kicad_board()
         if board is None:
             return
         try:
@@ -748,9 +757,10 @@ class Kicad2antDialog(wx.Dialog):
             if d.ShowModal() == wx.ID_OK:
                 self.outdir.SetValue(d.GetPath())
 
-    def run_folder(self):
-        board = self.kicad_board(quiet=True)
-        return core.run_dir(host.board_path(board) if board else '', base=self.outdir.GetValue().strip())
+    def run_folder(self, path=None):
+        if path is None:
+            path = self.kicad_board(quiet=True)[1]
+        return core.run_dir(path, base=self.outdir.GetValue().strip())
 
     def show_previous(self):
         """Shows the newest earlier result of this board for the chosen mode."""
@@ -796,11 +806,11 @@ class Kicad2antDialog(wx.Dialog):
         if not python:
             wx.MessageBox('Python 3 was not found: install it from python.org.', TITLE, wx.ICON_WARNING)
             return
-        board = self.kicad_board()
+        board, path = self.kicad_board()
         if board is None:
             return
         try:
-            out = self.run_folder()
+            out = self.run_folder(path)
         except ValueError:
             wx.MessageBox('Save the board once first.', TITLE)
             return
@@ -824,8 +834,8 @@ class Kicad2antDialog(wx.Dialog):
             wx.MessageBox('Could not save a copy of the board to:\n%s\n\n%s' % (copy, e), TITLE, wx.ICON_WARNING)
             return
 
-        if self.feed and self.feed_board != host.board_path(board):   # another board was opened under this window
-            self.set_feed(None)
+        if self.feed and self.feed_board != path:   # another board was opened under this window
+            self.set_feed(None, kb=(board, path))
         ref, num = self.feed if self.feed else ('auto', '')
         cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip(),
                              self.view.GetValue(), case, sets, self.match_db())

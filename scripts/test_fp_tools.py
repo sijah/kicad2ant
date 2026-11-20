@@ -91,6 +91,25 @@ def test_kicad_cli_newest():
     assert max(paths, key=fp_tools.version_key) == paths[1]
 
 
+def test_kicad_cli_path_not_first():   # KiCad 9 on PATH must not win over an installed KiCad 10
+    tmp = tempfile.mkdtemp()
+    exes = {}
+    for v in ('9.0', '10.0'):
+        d = os.path.join(tmp, 'KiCad', v, 'bin')
+        os.makedirs(d)
+        exes[v] = os.path.join(d, 'kicad-cli.exe' if os.name == 'nt' else 'kicad-cli')
+        open(exes[v], 'w').close()
+        os.chmod(exes[v], 0o755)
+    old = os.environ.get('PATH'), os.environ.pop('KICAD_CLI', None), fp_tools.INSTALLS
+    os.environ['PATH'] = os.path.dirname(exes['9.0'])
+    fp_tools.INSTALLS = [os.path.join(tmp, 'KiCad', '*', 'bin', os.path.basename(exes['9.0']))]
+    try:
+        assert fp_tools.find_kicad_cli() == exes['10.0'], fp_tools.find_kicad_cli()
+    finally:
+        os.environ['PATH'], fp_tools.INSTALLS = old[0], old[2]
+        if old[1] is not None: os.environ['KICAD_CLI'] = old[1]
+
+
 def test_no_nets_no_place():
     m = mod()
     assert '(net ' not in m and '(at 100 50' not in m

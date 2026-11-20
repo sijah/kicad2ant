@@ -166,14 +166,20 @@ def version_key(path):
     return tuple(int(n) for n in v[-1].split('.')) if v else ()
 
 
+INSTALLS = [os.path.join(r, 'KiCad', '*', 'bin', 'kicad-cli.exe')   # Windows all-users and per-user installs
+            for r in {os.environ.get('ProgramFiles', r'C:\Program Files'), r'C:\Program Files',
+                      os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs')}]
+INSTALLS.append('/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli')
+
+
 def find_kicad_cli():
-    found = [os.environ.get('KICAD_CLI'), shutil.which('kicad-cli')]
-    roots = {os.environ.get('ProgramFiles', r'C:\Program Files'), r'C:\Program Files',
-             os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs')}   # all-users and per-user installs
-    found += sorted((f for r in roots for f in glob.glob(os.path.join(r, 'KiCad', '*', 'bin', 'kicad-cli.exe'))),
-                    key=version_key, reverse=True)
-    found.append('/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli')
-    return next((f for f in found if f and os.path.isfile(f)), None)
+    """KICAD_CLI if set, else the newest of PATH's kicad-cli and the installed ones (an old KiCad on PATH
+    can't read newer boards)."""
+    if os.path.isfile(os.environ.get('KICAD_CLI') or ''):
+        return os.environ['KICAD_CLI']
+    found = {f for p in INSTALLS for f in glob.glob(p)} | {shutil.which('kicad-cli')}
+    found = [f for f in found if f and os.path.isfile(f)]
+    return max(found, key=lambda f: version_key(os.path.realpath(f)), default=None)
 
 
 def refill(board):
