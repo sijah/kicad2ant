@@ -1,6 +1,6 @@
 # Changelog — kicad2ant
 
-## v2.0.0 (unreleased)
+## v2.0.0 (2026-11-20)
 
 ### Changed
 - The plugin runs through KiCad's IPC API (kicad-python), not the SWIG `pcbnew` module that KiCad 11 removes.
