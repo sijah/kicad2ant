@@ -321,10 +321,12 @@ Full option list and model details: [docs/USAGE.md](docs/USAGE.md).
 `examples/antenna_footprints.pretty/` is a KiCad footprint library of printed antennas: IFAs and meandered IFAs
 (TI, Silicon Labs and others), monopoles, a patch, a Yagi, a helical, a log-periodic and UWB antennas, from
 868 MHz to 10 GHz. Each footprint's description says what the antenna is and, where there is one, the app note
-it comes from and the board it was designed for. Each one also has a ready-made board in `examples/<name>/` that you can simulate straight away:
+it comes from and the board it was designed for. Turn one into a board you can
+simulate with `fp2board.py` (next section). Two ready-made boards with stored results are in `examples/ti_ifa/`
+and `examples/openems_ifa/`:
 
 ```
-python scripts/kicad2ant.py examples/ti_dn007_ifa/ti_dn007_ifa.kicad_pcb --mode dry
+python scripts/kicad2ant.py examples/ti_ifa/ifa.kicad_pcb --mode dry
 ```
 
 ### Starting from a footprint only
@@ -446,7 +448,6 @@ addon repository wants.
 | `kicad_plugin/kicad2ant_plugin/` | the plugin: `kicad2ant_ipc.py` (entry), `dialog.py` (window), `host.py` (KiCad API), `core.py` (helpers) |
 | `kicad_plugin/metadata.json`, `build_pcm.py` | package metadata and builder |
 | `examples/antenna_footprints.pretty/` | the example antenna footprint library |
-| `examples/<name>/` | a board per example antenna |
 | `examples/ti_ifa/` | example board with coarse results |
 | `examples/openems_ifa/` | openEMS's own `inverted_f.m` antenna as a KiCad board, with fast and coarse results |
 | `docs/` | `USAGE.md` (the model in detail), `ARCHITECTURE.md`, `MESHING.md` and `MESHER.md` (how the mesh is made) |
