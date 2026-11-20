@@ -17,8 +17,8 @@
     },
     "versions": [
         {
-            "version": "0.3.11",
-            "status": "testing",
+            "version": "1.0.0",
+            "status": "stable",
             "kicad_version": "10.0",
             "kicad_version_max": "10.99",
             "runtime": "swig"

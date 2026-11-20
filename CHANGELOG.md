@@ -1,5 +1,9 @@
 # Changelog — kicad2ant
 
+## v1.0.0 (2026-11-20)
+
+First release for the KiCad Plugin and Content Manager. Same code as v0.3.11; status "stable".
+
 ## v0.3.11 (2026-11-16)
 
 ### Fixed
