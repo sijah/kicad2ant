@@ -29,8 +29,8 @@ in `SKILL.md`.
 | Geometry | `scripts/extract_antenna.py` | Python 3 | Python only (reads the `.kicad_pcb` text, no pcbnew) |
 | Mesh | `scripts/mesher.py` | Python 3 | Python only |
 | Model, run, results | `scripts/antenna_sim.m` | Octave | Octave + openEMS 0.37 |
-| KiCad window | `kicad_plugin/kicad2ant_plugin/` | Python (wx, pcbnew) | KiCad 10 |
-| Tuning helpers | `scripts/fp_tools.py` | Python (pcbnew) | KiCad's Python |
+| KiCad window | `kicad_plugin/kicad2ant_plugin/` | Python (wx, kipy) | KiCad 10+, API on |
+| Tuning helpers | `scripts/fp_tools.py` | Python 3 | Python only; refill runs `kicad-cli` |
 | Footprint to board | `scripts/fp2board.py` | Python 3 | Python only |
 
 The work is split this way so that everything decided from the board, including the geometry and the
@@ -43,15 +43,17 @@ openEMS and does the post-processing.
 
 `kicad_plugin/kicad2ant_plugin/`
 
-- `__init__.py`: a SWIG `pcbnew.ActionPlugin` with a wx dialog. It holds the mode, f0, band, feed pad
+- `kicad2ant_ipc.py`: the IPC plugin entry KiCad starts (`plugin.json`) in its own process. One window per user.
+- `host.py`: every KiCad API (kipy) call: board path, footprints, selected feed, zone fill + saved copy.
+- `dialog.py`: the wx window. It holds the mode, f0, band, feed pad
   ("use selected"), ground net, plastic case, the openEMS folder and the run folder.
 - `core.py`: pure-Python helpers, tested by `kicad_plugin/test_core.py`. They build the command line,
   find the run folder and the result, parse the summary, read progress from the log, and handle the
   run-folder lock and stopping the process tree.
 
 When you press Run:
-1. It loads the board, refills the zones (`ZONE_FILLER`), and saves a **copy** into the run folder as
-   `board.kicad_pcb`. The user's board is never changed.
+1. Through the KiCad API it refills the zones in the open board and saves a **copy** into the run folder as
+   `board.kicad_pcb` (without the project). The user's board file is never written.
 2. It starts `kicad2ant.py` on that copy as a child process, and streams the log into the window with a
    progress bar.
 3. When the run ends, it shows the summary and the result plots.
@@ -171,7 +173,7 @@ BOARD_kicad2ant/
 | Tool | What it does |
 |---|---|
 | `scripts/fp2board.py` | Turns a bare antenna footprint (`.kicad_mod`) into a simulatable board: GND copper from the polygons holding pad 2, the rest as antenna footprint `ANT1`, feed pad 1 on net RF, 2- or 4-layer stackup, outline from F.Fab and the copper. It made the example boards in `examples/`. |
-| `scripts/fp_tools.py refill BOARD` | Refills the zones of a board copy after the antenna copper changed (KiCad's Python). |
+| `scripts/fp_tools.py refill BOARD` | Refills the zones of a board copy after the antenna copper changed (`kicad-cli pcb drc --refill-zones --save-board`). |
 | `scripts/fp_tools.py save-footprint ...` | Saves the tuned antenna from a board copy into a `.pretty` library, with the run noted in its description. |
 
 ## 7. Tests and CI
@@ -189,7 +191,7 @@ coarse run (about 10 minutes).
 
 ## 8. Limits
 
-- KiCad 10 only. KiCad 11 removes the SWIG `ActionPlugin`.
+- The plugin needs KiCad's API turned on.
 - No spaces in the openEMS or run folder paths.
 - Diagonal and arc edges get no grid lines of their own.
 - Known open issue: on the IFA example the far field looks wrong right at resonance (see `CLAUDE.md`).

@@ -422,8 +422,12 @@ def band_covered(lines):
     return any(l.startswith('S11 < -') and ' covers the ' in l for l in lines)
 
 
-def find_python(exe=sys.executable, prefix=sys.prefix):
+def find_python(exe=sys.executable, prefix=sys.prefix, base=sys.base_prefix):
     """A Python 3 for running kicad2ant.py: KiCad's own if possible (inside KiCad sys.executable is kicad)."""
+    if os.path.basename(exe).lower() == 'pythonw.exe':   # the IPC plugin's venv (Windows)
+        # KiCad's console python.exe: pythonw gives Octave its own console, and the venv's python.exe is a launcher
+        # that runs the script in a second process (the run-folder lock holds the launcher's pid). stdlib is enough.
+        exe = os.path.join(base, 'python.exe')
     d = os.path.dirname(exe)
     cands = [exe if os.path.basename(exe).lower().startswith('python') else '',
              os.path.join(d, 'python.exe'), os.path.join(prefix, 'python.exe'), os.path.join(prefix, 'bin', 'python3'),

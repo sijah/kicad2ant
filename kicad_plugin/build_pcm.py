@@ -11,15 +11,17 @@ PLUGIN = os.path.join(HERE, 'kicad2ant_plugin')
 with open(os.path.join(HERE, 'metadata.json'), encoding='utf-8') as f:
     meta = json.load(f)
 version = meta['versions'][0]['version']
-src = open(os.path.join(PLUGIN, '__init__.py'), encoding='utf-8').read()
-assert "VERSION = '%s'" % version in src, 'set VERSION in kicad2ant_plugin/__init__.py to ' + version
+src = open(os.path.join(PLUGIN, 'dialog.py'), encoding='utf-8').read()
+assert "VERSION = '%s'" % version in src, 'set VERSION in kicad2ant_plugin/dialog.py to ' + version
+with open(os.path.join(PLUGIN, 'plugin.json'), encoding='utf-8') as f:
+    assert json.load(f)['identifier'] == meta['identifier'], 'plugin.json and metadata.json identifiers differ'
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts', 'kicad2ant.py'), encoding='utf-8') as f:
     assert "VERSION = '%s'" % version in f.read(), 'set VERSION in scripts/kicad2ant.py to ' + version   # on the plots
 files = {'metadata.json': os.path.join(HERE, 'metadata.json'),
          'plugins/LICENSE': os.path.join(ROOT, 'LICENSE'),
          'resources/icon.png': os.path.join(HERE, 'icon64.png'),
          'plugins/icon64.png': os.path.join(HERE, 'icon64.png')}   # the logo in the window
-for name in ('__init__.py', 'core.py', 'icon.png'):
+for name in ('dialog.py', 'core.py', 'host.py', 'kicad2ant_ipc.py', 'plugin.json', 'requirements.txt', 'icon.png'):
     files['plugins/' + name] = os.path.join(PLUGIN, name)
 for name in ('kicad2ant.py', 'extract_antenna.py', 'mesher.py', 'antenna_sim.m'):
     files['plugins/scripts/' + name] = os.path.join(ROOT, 'scripts', name)

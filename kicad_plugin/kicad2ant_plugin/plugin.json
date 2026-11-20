@@ -1,0 +1,19 @@
+{
+    "$schema": "https://go.kicad.org/api/schemas/v1",
+    "identifier": "com.github.sijah.kicad2ant",
+    "name": "kicad2ant",
+    "description": "Simulate the printed antenna of the open board in openEMS: S11, band, gain, pattern.",
+    "runtime": {"type": "python", "min_version": "3.9"},
+    "actions": [
+        {
+            "identifier": "simulate",
+            "name": "kicad2ant: antenna simulation",
+            "description": "Simulate the PCB antenna of this board in openEMS (S11, band, gain, pattern)",
+            "show-button": true,
+            "scopes": ["pcb"],
+            "entrypoint": "kicad2ant_ipc.py",
+            "icons-light": ["icon.png"],
+            "icons-dark": ["icon.png"]
+        }
+    ]
+}

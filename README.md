@@ -119,11 +119,11 @@ the `OCTAVE` and `OPENEMS` environment variables instead.
 
 ### Connecting the plugin to Octave and openEMS
 
-The plugin runs the same `kicad2ant.py` in KiCad's own Python, so it finds Octave and openEMS the same way. Usually
+The plugin runs the same `kicad2ant.py` in the Python KiCad gives its plugins, so it finds Octave and openEMS the same way. Usually
 there is nothing to set:
 
 1. Do the steps above, then install the plugin (next section) and restart KiCad.
-2. In the PCB editor click the kicad2ant toolbar button (or **Tools → External Plugins → kicad2ant**), and go to the **Setup** tab.
+2. In the PCB editor click the kicad2ant toolbar button, and go to the **Setup** tab.
 3. Read the two lines under the fields:
    - both show a version: you're connected, go to the **Run** tab;
    - `Octave not found`: click **...** next to **Octave** and pick `octave-gui.exe` (Windows, in
@@ -143,21 +143,20 @@ openEMS's `matlab` folder) was skipped or done in another Octave.
    [release](https://github.com/sijah/kicad2ant/releases/latest),
    or build it with `python kicad_plugin/build_pcm.py` (the zip ends up in `dist/`).
 2. In KiCad, open the **Plugin and Content Manager**, click **Install from File…** and pick the zip.
-3. Open the PCB editor. The kicad2ant button is in the top toolbar and under **Tools → External Plugins**. If
-   you don't see it, try **Tools → External Plugins → Refresh Plugins** or restart KiCad.
+3. Turn on **Preferences → Plugins → Enable KiCad API** if it is off, and restart KiCad.
+4. Open the PCB editor. The kicad2ant button is in the toolbar. The first time, it can take a minute to appear:
+   KiCad makes a Python environment for the plugin and installs `kicad-python` into it.
 
 ### By hand
 
-Unzip the package and copy what's inside its `plugins/` folder into a new `kicad2ant` folder here:
+Unzip the package and copy what's inside its `plugins/` folder into a new folder
+`com_github_sijah_kicad2ant` in KiCad's 3rd-party plugin folder, `${KICAD10_3RD_PARTY}/plugins/` (Preferences →
+Configure Paths shows where it is; on Windows usually `Documents\KiCad\10.0\3rdparty\plugins\`). Restart KiCad.
 
-| OS | Folder |
-|---|---|
-| Windows | `C:\Users\<user>\Documents\KiCad\10.0\scripting\plugins\kicad2ant\` |
-| Linux | `~/.local/share/kicad/10.0/scripting/plugins/kicad2ant/` |
-| macOS | `~/Documents/KiCad/10.0/scripting/plugins/kicad2ant/` |
-
-It's a classic action plugin (SWIG), so you don't need to enable the API or install any Python packages.
-KiCad plans to drop the SWIG runtime in KiCad 11, so this version targets KiCad 10 only.
+Since 2.0.0 it is an IPC API plugin, so it keeps working in KiCad 11, which drops the SWIG runtime. It needs
+**Enable KiCad API** turned on. On Linux, KiCad builds the plugin's Python from the first `python3` in your PATH,
+and that Python needs wxPython (`python3-wxgtk4.0`). Version 1.0.0 is the SWIG plugin, for KiCad 10 with the
+API turned off.
 
 ## Using it in KiCad
 
@@ -437,8 +436,8 @@ addon repository wants.
 | `scripts/mesher.py` | mesh lines from the copper edges, written into `antenna_geom.m` |
 | `scripts/antenna_sim.m` | model, openEMS run, post-processing |
 | `scripts/fp2board.py` | antenna footprint (`.kicad_mod`) → simulatable board |
-| `scripts/fp_tools.py` | tuning helpers for a board copy (runs in KiCad's Python): refill zones, save a board footprint to a library |
-| `kicad_plugin/kicad2ant_plugin/` | the plugin: `__init__.py` (window), `core.py` (helpers) |
+| `scripts/fp_tools.py` | tuning helpers for a board copy (Python 3; refill uses kicad-cli): refill zones, save a board footprint to a library |
+| `kicad_plugin/kicad2ant_plugin/` | the plugin: `kicad2ant_ipc.py` (entry), `dialog.py` (window), `host.py` (KiCad API), `core.py` (helpers) |
 | `kicad_plugin/metadata.json`, `build_pcm.py` | package metadata and builder |
 | `examples/antenna_footprints.pretty/` | the example antenna footprint library |
 | `examples/<name>/` | a board per example antenna |

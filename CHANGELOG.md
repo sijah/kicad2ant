@@ -1,5 +1,19 @@
 # Changelog — kicad2ant
 
+## v2.0.0 (unreleased)
+
+### Changed
+- The plugin runs through KiCad's IPC API (kicad-python), not the SWIG `pcbnew` module that KiCad 11 removes.
+  Turn on Preferences > Plugins > Enable KiCad API. KiCad 10 and later.
+- The window is its own program now: it doesn't stay on top of KiCad, and a second press of the toolbar button
+  while it is open does nothing. It asks KiCad for the open board each time, so opening another board resets the
+  feed pick.
+- The zone fill runs in the open editor as before, and the board then shows as modified (`*`). Don't save it if you
+  don't want the fills in your file.
+- `scripts/fp_tools.py` (the tuning helpers) no longer needs KiCad's `pcbnew` module: it runs in any Python 3.
+  `refill` calls `kicad-cli pcb drc --refill-zones --save-board`; `save-footprint` edits the footprint text the way
+  KiCad's own footprint save does, checked against KiCad's output in `scripts/test_fp_tools.py`.
+
 ## v1.0.0 (2026-11-20)
 
 First release for the KiCad Plugin and Content Manager. Same code as v0.3.11; status "stable".

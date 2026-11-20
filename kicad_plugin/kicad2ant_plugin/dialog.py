@@ -1,17 +1,14 @@
-"""kicad2ant KiCad plugin: simulate the antenna of the open board in openEMS from a toolbar button.
+"""kicad2ant KiCad plugin window (IPC API plugin, started by kicad2ant_ipc.py): simulate the antenna of the open board in openEMS.
 
 It fills the zones, saves a copy of the board as it is on screen into the run folder and runs scripts/kicad2ant.py
 on that copy (the user's .kicad_pcb / .kicad_pro are never written). Progress comes from openEMS's own log file."""
 import json, os, re, subprocess, sys, textwrap, threading, time
 
-import pcbnew
 import wx
 import wx.adv
 
-try:
-    from . import core
-except ImportError:   # loaded as a plain module (development)
-    import core
+import core
+import host
 
 PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 SETTINGS = os.path.join(os.path.expanduser('~'), '.kicad2ant_plugin.json')
@@ -26,11 +23,10 @@ THEMES = ['System', 'Light', 'Dark']
 COLOURS = {1: ((245, 245, 245), (20, 20, 20), (255, 255, 255)), 2: ((32, 32, 32), (225, 225, 225), (48, 48, 48))}   # window, text, field
 NOT_NAMED = '  (not named AE* / ANT*: check it is the antenna, not a matching part)'
 TITLE = 'kicad2ant'
-VERSION = '1.0.0'   # build_pcm.py checks it against metadata.json
+VERSION = '2.0.0'   # build_pcm.py checks it against metadata.json
 LOGO = os.path.join(PLUGIN_DIR, 'icon64.png')
 if not os.path.isfile(LOGO):   # running from the repo
     LOGO = os.path.join(PLUGIN_DIR, '..', 'icon64.png')
-_dialog = None
 HOMEPAGE = 'https://github.com/sijah/kicad2ant'
 ABOUT = ('Simulates the printed antenna on this board in openEMS (FDTD): S11, Zin, the resonance and the matched band, '
          'and in Coarse / Fine also gain, efficiency and the pattern, with a .s1p for your RF tools.\n\n'
@@ -89,26 +85,6 @@ def save_settings(s):
             json.dump(s, f)
     except OSError:
         pass
-
-
-def selected_feed():
-    """(ref, pad number, whether the footprint is named like an antenna) of the selected pad, or of pad 1 of a
-    selected footprint; None when nothing is selected. Any footprint is taken: people name antennas E1, A1, X1."""
-    board = pcbnew.GetBoard()
-    hit = None
-    for fp in board.GetFootprints():
-        if fp.IsSelected():   # KiCad marks a selected footprint's pads as selected too, so ask the footprint first
-            hit = (fp, '1')
-            break
-        pad = next((p for p in fp.Pads() if p.IsSelected()), None)
-        if pad is not None:
-            hit = (fp, pad.GetNumber())
-            break
-    if hit is None:
-        return None
-    fp, num = hit
-    ref = fp.GetReference()
-    return ref, num, core.is_antenna_ref(ref, fp.GetFPIDAsString())
 
 
 def child_env(python, octave, openems=''):
@@ -381,7 +357,9 @@ class Kicad2antDialog(wx.Dialog):
         # ---- Setup: set once
         self.theme_ctl = wx.Choice(setup, choices=THEMES)
         self.theme_ctl.SetSelection(s['theme'] if s['theme'] in (0, 1, 2) else 0)
-        self.theme_ctl.Bind(wx.EVT_CHOICE, lambda e: self.apply_theme())
+        self.theme_ctl.Bind(wx.EVT_CHOICE, self.on_theme)
+        self.theme_note = wx.StaticText(setup, label='Close and reopen the window to theme it fully.')
+        self.theme_note.Hide()
         self.octave = wx.TextCtrl(setup, value=s['octave'])
         self.octave.SetHint('found by itself')
         self.octave.SetToolTip('Set it only if the run says Octave was not found: octave-gui.exe or octave.')
@@ -403,7 +381,10 @@ class Kicad2antDialog(wx.Dialog):
             sg.Add(ctl, 1, wx.EXPAND)
             sg.Add(b)
         sg.Add(wx.StaticText(setup, label='Theme'), 0, wx.ALIGN_CENTER_VERTICAL)
-        sg.Add(self.theme_ctl)
+        th = wx.BoxSizer(wx.HORIZONTAL)
+        th.Add(self.theme_ctl)
+        th.Add(self.theme_note, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 10)
+        sg.Add(th)
         self.tools_lbl = wx.StaticText(setup, label='Looking for Octave and openEMS ...')
         check = wx.Button(setup, label='Check again')
         check.SetToolTip('Look for Octave and openEMS again, with the paths above.')
@@ -639,6 +620,13 @@ class Kicad2antDialog(wx.Dialog):
         except ValueError:
             return []
 
+    def on_theme(self, _):
+        """Recolours what it can now; the native controls take the app appearance, set only at start (kicad2ant_ipc)."""
+        save_settings(self.settings())
+        self.apply_theme()
+        self.theme_note.Show()
+        self.theme_note.GetParent().Layout()
+
     def apply_theme(self):
         """System leaves every colour to KiCad / the OS; Light and Dark set them on the window and its controls."""
         theme = self.theme_ctl.GetSelection()
@@ -687,12 +675,18 @@ class Kicad2antDialog(wx.Dialog):
 
     def set_feed(self, feed, named=True):
         self.feed = feed
-        board = pcbnew.GetBoard()
-        self.feed_board = board.GetFileName()   # the pick belongs to this board only
+        board = self.kicad_board(quiet=True)
+        self.feed_board = host.board_path(board) if board else None   # the pick belongs to this board only
+        try:
+            fps = host.footprints(board) if board and feed is None else []
+        except host.HostError:   # KiCad went away between the two calls
+            board = None
         if feed is not None:
             text = '%s pad %s' % feed + ('' if named else NOT_NAMED)
+        elif board is None:
+            text = 'KiCad is not reachable: open the board in KiCad, then press Auto'
         else:   # say what Auto finds, not the rule
-            ref, why = core.auto_pick([(fp.GetReference(), fp.GetFPIDAsString()) for fp in board.GetFootprints()])
+            ref, why = core.auto_pick(fps)
             text = ('Auto: %s pad 1' % ref + ('  (reference not annotated: annotate the board)' if re.search(r'[*?]', ref) else '')
                     if ref else 'Auto finds %s: select the feed pad and press Use selected pad' % why)
         self.feed_txt.SetLabel(text)
@@ -700,21 +694,38 @@ class Kicad2antDialog(wx.Dialog):
 
     def show_board(self):
         """The Run tab's Board line: thickness, layers, εr of the saved board file, read again only when it changed."""
-        path = pcbnew.GetBoard().GetFileName()
+        board = self.kicad_board(quiet=True)
+        path = host.board_path(board) if board else ''
         try:
             seen = (path, os.path.getmtime(path))
         except OSError:
             seen = (path, None)
         if seen != self.board_seen:
             self.board_seen = seen
-            line, _, warn = (core.board_file_line(path) or 'not saved yet').partition(' (')
+            line, _, warn = (core.board_file_line(path) or ('not saved yet' if board else 'KiCad is not reachable')).partition(' (')
             self.board_txt.SetLabel(line)
             self.board_warn.SetLabel(warn.rstrip(')'))
             self.board_warn.Show(bool(warn))
             self.Layout()
 
+    def kicad_board(self, quiet=False):
+        """The board open in KiCad now (asked each time: the user may have opened another), or None with a message."""
+        try:
+            return host.connect()
+        except host.HostError as e:
+            if not quiet:
+                wx.MessageBox(str(e), TITLE, wx.ICON_WARNING)
+            return None
+
     def on_use_selected(self, _):
-        hit = selected_feed()
+        board = self.kicad_board()
+        if board is None:
+            return
+        try:
+            hit = host.selected_feed(board)
+        except host.HostError as e:
+            wx.MessageBox(str(e), TITLE, wx.ICON_WARNING)
+            return
         if hit is None:
             wx.MessageBox('Nothing is selected. Click the feed pad of the antenna in the PCB editor first.', TITLE)
         elif not hit[1]:   # an empty number would be sent as no --feed at all, and pad 1 fed instead
@@ -738,7 +749,8 @@ class Kicad2antDialog(wx.Dialog):
                 self.outdir.SetValue(d.GetPath())
 
     def run_folder(self):
-        return core.run_dir(pcbnew.GetBoard().GetFileName(), base=self.outdir.GetValue().strip())
+        board = self.kicad_board(quiet=True)
+        return core.run_dir(host.board_path(board) if board else '', base=self.outdir.GetValue().strip())
 
     def show_previous(self):
         """Shows the newest earlier result of this board for the chosen mode."""
@@ -784,7 +796,9 @@ class Kicad2antDialog(wx.Dialog):
         if not python:
             wx.MessageBox('Python 3 was not found: install it from python.org.', TITLE, wx.ICON_WARNING)
             return
-        board = pcbnew.GetBoard()
+        board = self.kicad_board()
+        if board is None:
+            return
         try:
             out = self.run_folder()
         except ValueError:
@@ -802,16 +816,15 @@ class Kicad2antDialog(wx.Dialog):
 
         self.phase.SetLabel('Filling zones and saving a copy of the board')
         wx.SafeYield()
-        if not pcbnew.ZONE_FILLER(board).Fill(board.Zones()):
-            self.add_log('warning: the zone fill reported a problem')
-        pcbnew.Refresh()
         copy = os.path.join(out, 'board.kicad_pcb')
-        if not pcbnew.SaveBoard(copy, board, True):   # True: leave the open project's settings where they are
+        try:
+            host.fill_and_copy(board, copy)   # the copy only: the open project's settings stay where they are
+        except host.HostError as e:
             self.phase.SetLabel('')   # an unsaved copy would leave the last run's board there to be simulated as this one
-            wx.MessageBox('Could not save a copy of the board to:\n' + copy, TITLE, wx.ICON_WARNING)
+            wx.MessageBox('Could not save a copy of the board to:\n%s\n\n%s' % (copy, e), TITLE, wx.ICON_WARNING)
             return
 
-        if self.feed and self.feed_board != board.GetFileName():   # another board was opened under this window
+        if self.feed and self.feed_board != host.board_path(board):   # another board was opened under this window
             self.set_feed(None)
         ref, num = self.feed if self.feed else ('auto', '')
         cmd = core.build_cmd(python, script_path(), copy, out, mode, ref, num, f0, (lo, hi), self.gnd.GetValue().strip(),
@@ -1087,35 +1100,8 @@ class Kicad2antDialog(wx.Dialog):
         self.Destroy()
 
     def on_destroy(self, event):
-        """Also runs when KiCad destroys the dialog with the PCB editor (no EVT_CLOSE then): end the run."""
-        global _dialog
+        """Ends the run with the window (the app's main loop ends with its last window)."""
         if event.GetEventObject() is self:
             self.timer.Stop()
             self.stop_run()
-            _dialog = None
         event.Skip()
-
-
-class Kicad2antPlugin(pcbnew.ActionPlugin):
-    def defaults(self):
-        self.name = 'kicad2ant: antenna simulation'
-        self.category = 'Simulation'
-        self.description = 'Simulate the PCB antenna of this board in openEMS (S11, band, gain, pattern)'
-        self.show_toolbar_button = True
-        self.icon_file_name = os.path.join(PLUGIN_DIR, 'icon.png')
-        self.dark_icon_file_name = self.icon_file_name
-
-    def Run(self):
-        global _dialog
-        if not pcbnew.GetBoard().GetFileName():
-            wx.MessageBox('Save the board once first.', TITLE)
-            return
-        if _dialog:
-            _dialog.Iconize(False)   # the toolbar button brings a minimized window back
-            _dialog.Raise()
-            return
-        _dialog = Kicad2antDialog(wx.FindWindowByName('PcbFrame'))
-        _dialog.Show()   # not modal: the feed pad can be clicked in the editor meanwhile
-
-
-Kicad2antPlugin().register()

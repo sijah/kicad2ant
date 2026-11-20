@@ -182,6 +182,15 @@ def test_find_python():
         open(f, 'w').close()
     assert core.find_python(exe, '/nonexistent') == py
     assert core.find_python(py, '/nonexistent') == py
+    # IPC plugin venv: KiCad runs the plugin with the venv's pythonw.exe. The child must be a console python.exe
+    # (else Octave and openEMS each pop up a console and their output misses the log), and the base one: the venv's
+    # Scripts\python.exe is a launcher that runs the script in a second process, whose pid the run-folder lock refuses
+    venv = os.path.join(tempfile.mkdtemp(), 'Scripts'); os.makedirs(venv)
+    base = tempfile.mkdtemp()
+    pyw, launcher, real = os.path.join(venv, 'pythonw.exe'), os.path.join(venv, 'python.exe'), os.path.join(base, 'python.exe')
+    for f in (pyw, launcher, real):
+        open(f, 'w').close()
+    assert core.find_python(pyw, os.path.dirname(venv), base) == real
 
 
 def test_pid_alive():
@@ -284,6 +293,162 @@ def test_bands():
     assert core.build_cmd('py', 'k.py', 'b', 'o', 'fast', match=-6)[8:10] == ['--match', '-6']
     assert '--match' not in core.build_cmd('py', 'k.py', 'b', 'o', 'fast')
     assert core.band_covered(['S11 < -6 dB: 860 .. 875 MHz, covers the 863.0..870.0 MHz target'])
+
+
+# --- host.py (kipy adapter): fakes carry the class and attribute names logged by the 2026-11-20 spike
+import types  # noqa: E402
+import host  # noqa: E402
+
+NS = types.SimpleNamespace
+
+
+class Pad:
+    def __init__(self, number, uid):
+        self.number, self.id = number, NS(value=uid)
+
+
+class FootprintInstance:
+    def __init__(self, ref, lib, pads):
+        self.reference_field = NS(text=NS(value=ref))
+        self.definition = NS(id=lib, pads=[Pad(n, u) for n, u in pads])
+        self.id = NS(value='fp-' + ref)
+
+
+class Zone:
+    id = NS(value='z1')
+
+
+class ApiError(Exception):
+    def __init__(self, msg, code=3):
+        super().__init__(msg)
+        self.code = code
+
+
+class FakeBoard:
+    def __init__(self, name='ifa.kicad_pcb', path='C:/x', fps=(), sel=(), busy=0, refill_raises=None, save_raises=None):
+        self.name, self._path, self._fps, self._sel = name, path, list(fps), list(sel)
+        self.busy, self.refill_raises, self.save_raises = busy, refill_raises, save_raises
+        self.saved, self.refills = [], []
+
+    def get_project(self):
+        return NS(path=self._path)
+
+    def get_footprints(self):
+        return self._fps
+
+    def get_selection(self):
+        return self._sel
+
+    def refill_zones(self, block=True, max_poll_seconds=30.0):
+        self.refills.append(block)
+        if self.refill_raises:
+            raise self.refill_raises
+
+    def save_as(self, filename, overwrite=False, include_project=True):
+        if self.save_raises:
+            raise self.save_raises
+        if self.busy:
+            self.busy -= 1
+            raise ApiError('busy', code=host.AS_BUSY)
+        self.saved.append((filename, overwrite, include_project))
+
+
+ANT = FootprintInstance('ANT1', ':Texas_SWRA117D_2.4GHz_Right', [('1', 'p1'), ('2', 'p2')])
+RES = FootprintInstance('R1', 'Resistor_SMD:R_0402', [('1', 'r1')])
+
+
+def test_board_path():
+    assert host.board_path(FakeBoard(name='')) == ''
+    assert host.board_path(FakeBoard()) == os.path.join('C:/x', 'ifa.kicad_pcb')
+
+
+def test_footprints():
+    assert host.footprints(FakeBoard(fps=[ANT, RES])) == [('ANT1', ':Texas_SWRA117D_2.4GHz_Right'), ('R1', 'Resistor_SMD:R_0402')]
+
+
+def test_feed_from_selection():
+    fps = [ANT, RES]
+    assert host.feed_from_selection([ANT], fps) == ('ANT1', '1', True)
+    assert host.feed_from_selection([Pad('2', 'p2')], fps) == ('ANT1', '2', True)
+    assert host.feed_from_selection([Pad('1', 'r1')], fps) == ('R1', '1', False)
+    assert host.feed_from_selection([Zone()], fps) is None
+    assert host.feed_from_selection([], fps) is None
+    assert host.feed_from_selection([ANT, RES], fps) is None
+    assert host.feed_from_selection([Pad('9', 'nowhere')], fps) is None
+    assert host.selected_feed(FakeBoard(fps=fps, sel=[Pad('1', 'p1')])) == ('ANT1', '1', True)
+
+
+def test_fill_and_copy():
+    b = FakeBoard(busy=3)
+    host.fill_and_copy(b, 'c.kicad_pcb', wait=5, poll=0)
+    assert b.refills == [False] and b.saved == [('c.kicad_pcb', True, False)]   # (path, overwrite, include_project)
+
+
+def test_fill_and_copy_timeout():
+    b = FakeBoard(busy=10 ** 9)
+    t = time.time()
+    try:
+        host.fill_and_copy(b, 'c.kicad_pcb', wait=0.2, poll=0.01)
+        raise AssertionError('no timeout')
+    except host.HostError as e:
+        assert '0 s' in str(e) or 'did not finish' in str(e)
+    assert b.saved == [] and time.time() - t < 2   # no copy from stale fills
+
+
+def test_footprints_kicad_gone():
+    class ConnectionError(Exception):
+        pass
+
+    class Gone(FakeBoard):
+        def get_footprints(self):
+            raise ConnectionError('gone')
+    try:
+        host.footprints(Gone())
+        raise AssertionError
+    except host.HostError as e:
+        assert 'Enable KiCad API' in str(e)
+
+
+def test_host_errors():
+    class ConnectionError(Exception):   # kipy.errors.ConnectionError, matched by name
+        pass
+    for exc in (ConnectionError('gone'), OSError('pipe')):
+        try:
+            host.fill_and_copy(FakeBoard(refill_raises=exc), 'c.kicad_pcb', poll=0)
+            raise AssertionError
+        except host.HostError as e:
+            assert 'Enable KiCad API' in str(e)
+    try:
+        host.fill_and_copy(FakeBoard(save_raises=ApiError('no such path')), 'c.kicad_pcb', poll=0)
+        raise AssertionError
+    except host.HostError as e:
+        assert 'no such path' in str(e)
+
+
+PLUGIN = os.path.join(HERE, 'kicad2ant_plugin')
+
+
+def test_ipc_package():
+    import json, re
+    src = open(os.path.join(PLUGIN, 'dialog.py'), encoding='utf-8').read()
+    assert not re.search(r'\bpcbnew\b|ActionPlugin', src)
+    assert not os.path.exists(os.path.join(PLUGIN, '__init__.py'))   # one runtime only: no SWIG plugin left behind
+    pj = json.load(open(os.path.join(PLUGIN, 'plugin.json'), encoding='utf-8'))
+    meta = json.load(open(os.path.join(HERE, 'metadata.json'), encoding='utf-8'))
+    assert pj['identifier'] == meta['identifier'] and pj['runtime']['type'] == 'python'
+    act = pj['actions'][0]
+    assert act['scopes'] == ['pcb'] and act['show-button'] is True
+    assert os.path.isfile(os.path.join(PLUGIN, act['entrypoint']))
+    assert all(os.path.isfile(os.path.join(PLUGIN, i)) for i in act['icons-light'] + act['icons-dark'])
+    assert open(os.path.join(PLUGIN, 'requirements.txt')).read().split() == ['kicad-python==0.8.0']
+
+
+def test_entry_without_wx():
+    import subprocess
+    code = ("import sys; sys.modules['wx'] = None; import runpy; "
+            "runpy.run_path(%r, run_name='__main__')" % os.path.join(PLUGIN, 'kicad2ant_ipc.py'))
+    r = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+    assert r.returncode != 0 and 'wxPython' in r.stderr and sys.executable in r.stderr, (r.returncode, r.stderr)
 
 if __name__ == '__main__':
     for name, fn in sorted(globals().items()):

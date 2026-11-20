@@ -81,9 +81,11 @@ Each shape change needs a new FDTD run (`--post` only redraws the same shape). K
    steps, confirm small ones at fine.
 3. **Refill the zones in the copy.** The extractor reads the *saved* zone fills, which were made around
    the old antenna: a bigger antenna would sit in stale ground copper, a smaller one would leave a gap.
-   With KiCad's Python (Windows `C:\Program Files\KiCad\10.0\bin\python.exe`, Linux/macOS the
-   python3 that imports `pcbnew`; called KPY below):
-   `KPY <skill>/scripts/fp_tools.py refill BOARD_try1/board.kicad_pcb`
+   `python3 <skill>/scripts/fp_tools.py refill BOARD_try1/board.kicad_pcb`
+   (any Python 3; it runs KiCad's `kicad-cli`, found in the KiCad install or through `KICAD_CLI`).
+   The copy has no `.kicad_pro`, so the refill uses the default clearances: if the ground clearance
+   around the antenna comes from a netclass, first copy the project's `.kicad_pro` next to it as
+   `board.kicad_pro`.
    If a moved short-pin pad no longer touches GND copper after the refill, the variant is not
    connected: say so, do not run it.
 4. **Run it into its own folder,** with the baseline's `REF`, `--f0`, `--band`, `--feed`, `--gnd`, `--case` and mode:
@@ -107,8 +109,9 @@ Never edit KiCad's own libraries (`RF_Antenna`), and never the user's `.kicad_pc
 The source of truth is the variant's footprint in `BOARD_tryN/board.kicad_pcb` (what was simulated), not
 the library file.
 
-1. **Footprint file.** Let KiCad write it from the simulated board copy, do not convert it by hand:
-   `KPY <skill>/scripts/fp_tools.py save-footprint BOARD_tryN/board.kicad_pcb REF LIB.pretty NAME "NOTE"`
+1. **Footprint file.** Write it from the simulated board copy with fp_tools, which writes it the way
+   KiCad's own footprint save does (tested against it); do not convert it by hand:
+   `python3 <skill>/scripts/fp_tools.py save-footprint BOARD_tryN/board.kicad_pcb REF LIB.pretty NAME "NOTE"`
    (unplaced, unrotated, pads without nets; front-side footprints only). NOTE goes into the footprint's
    description: the kicad2ant version, mode, resonance and f0, and the run folder, e.g.
    `"kicad2ant 0.2.0 fast: resonance 2438 MHz for f0 2440, run BOARD_try3_kicad2ant"`. Which `LIB.pretty` and `NAME`:
